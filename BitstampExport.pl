@@ -1,12 +1,31 @@
 use English;
 use strict;
 use DateTime;
+# https://github.com/DavidLittle/bitstamp-banana.git
 #use Parse::CSV;
+use Data::Dumper;
+use Storable qw(dclone);
 
 # Process a Bitstamp export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
+# Program works in several stages:
+# First, process the Bitstamp export parsing the dates and times into DateTime objects and splitting fields that have numbers and currencies
+#       also do the account mapping to Banana Credit and Debit accounts. Put the results into an array of hashes called $data1
+# Second, loop through the $data1 records accumulating multiple market trades transacted the same day into single records. Put the results into $data2
+# Third, loop again through the $data1 records processing fees - Fee records are accumulated to one Fee line per month. Results are appended to $data2
+# Fourth, process the accumulated buys and sells to produce 2 records for each market order. One is the Debit Cash record, other is the Credit ETH
+
+# TBD - process USD/GBP exchange rates cable.dat
+
+
+
 my %M = ('Jan'=>1,'Feb'=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,"Jul"=>7,"Aug"=>8,"Sep"=>9,"Oct"=>10,"Nov"=>11,"Dec"=>12);
-my $data = [];
+my $data1; # parsed input CSV file, with mapped banana account codes
+my $data2; # consecutive Buy and Sell records accumulated over 24 hour window
+my $data3; # fee records appended
+
 my $owner = "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
+my $cablefile = "Cable.dat";
+my $cable = {}; # hash keyed on date containing daily USD/GBP exchange rates
 my %BananaMapping = (
     "David,Main Account,BTC" => 10100,
     "David,Main Account,ETH" => 10101,
@@ -17,6 +36,21 @@ my %BananaMapping = (
     "David,BitstampFee,ETH"  => 6072,
 );
 
+# Read in FX rates
+my $cab = undef;
+open($cab, $cablefile) || die "Can't open $cablefile for reading: $!";
+while(<$cab>) {
+    s/\r//; #Remove carriage return
+	chomp;
+	next if $_ =~ /^#/; #skip comment lines
+	my($day, $month, $year, $rate) = split(/\s/);
+	my $dt = DateTime->new(year => $year, month => $M{$month}, day => $day, hour => 0, minute => 0, second => 0, time_zone => "UTC");
+	$cable->{$dt->dmy()} = $rate;
+#	print "$day, $month, $year, $rate " . $dt->dmy() . "\n";
+}
+#qprint "Rate for 19-07-2018 is $cable->{'19-07-2018'}\n";
+
+
 my $filename = $ARGV[0] || "Transactions.csv";
 my $in = undef;
 open($in, $filename) || die "Can't open $filename for reading: $!";
@@ -24,7 +58,7 @@ while(<$in>) {
     s/\r//; #Remove carriage return
     chomp; #Remove any linefeed
     if ($. == 1) { #First line - headers
-        #print "Type,Epoch,Date,Time,Account,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,SubType\n";
+        #print "Type,Subtype,Date,Time,Account,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
     } else {
         # Timestamp has spaces, commas and dots embedded, and is surrounded with double quotes so we'll process it in stages
         my ($type, $timestamp, $rest) = m/([a-zA-Z]+),"(.*)",(.*)/;
@@ -46,7 +80,8 @@ while(<$in>) {
         $rec->{type} = $type;
         $rec->{subtype} = $subtype;
         $rec->{dt} = $dt;
-        $rec->{epoch} = $dt->epoch();
+        $rec->{date} = $dt->dmy("/");
+        $rec->{time} = $dt->hms();
         $rec->{account} = $account;
         $rec->{amount} = $amount;
         $rec->{amountccy} = $amountccy;
@@ -67,8 +102,8 @@ while(<$in>) {
             $rec->{debitaccount} = $BananaMapping{"$owner,$account,$valueccy"};
             $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
         }
-        push @$data, $rec;
-        #print "$type,$subtype,$epoch,$day-$month-$year,$hour:$min:00,$account,$amount,$amountccy,$value,$valueccy,$rate,$rateccy,$fee,$feeccy\n";
+        push @$data1, $rec;
+        #print "$type,$subtype,$day-$month-$year,$hour:$min:00,$account,$amount,$amountccy,$value,$valueccy,$rate,$rateccy,$fee,$feeccy\n";
     }
 }
 
@@ -77,34 +112,26 @@ if (1) { # Accumulate market orders within 24 hours
 		 # Accumulate fees to end of month
 		 # Deposits and withdrawals do not get accumulated
     my $acc = {'count' => 0}; #initialise the accumulator for trades
-#    my $feeacc = {'count' => 0}; # initialise the fee accumulator
-    print "Type,Subtype,Date,Time,FirstEpoch,LastEpoch,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
-    foreach my $rec (@$data) {
+#    print "Type,Subtype,Date,Time,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
+    foreach my $rec (@$data1) {
         my $date = $rec->{dt}->dmy();
         my $time = $rec->{dt}->hms();
-        my $epoch = $rec->{dt}->epoch();
-#        if ($rec->{fee} > 0) {
-#        	$feeacc->{$rec->{feeccy}} += $rec->{fee};
-#        	$feeacc->{count}++;
-#        	$feeacc->{firstepoch} ||= $rec->{epoch};
-#        	$feeacc->{date} ||= $date;
-#        	$feeacc->{time} ||= $time;
-#        }
-        if ($rec->{type} eq 'Market' and $acc->{count} == 0) {
-            $acc = $rec; # If accumulator is empty then first Market record goes into the accumulator
-            $acc->{firstepoch} = $rec->{epoch};
-            $acc->{count} = 1;
+        if ($acc->{count} == 0) {
+            $acc = dclone($rec); # If accumulator is empty then first record goes into the accumulator (deep copy, so that @data1 is preserved)
+            $acc->{count}++;
+	        push @$data2, $acc;
         }
         elsif ($rec->{type} eq 'Market' and 
+                $rec->{type} eq $acc->{type} and 
                 $rec->{subtype} eq $acc->{subtype} and 
                 $rec->{account} eq $acc->{account} and 
                 $rec->{amountccy} eq $acc->{amountccy} and 
                 $rec->{valueccy} eq $acc->{valueccy} and 
-                $rec->{epoch} - $acc->{epoch} < 60*60*24) 
+                $rec->{date} eq $acc->{date} ) 
         {
             # Add this record to the accumulator
-            $acc->{dt} = $rec->{dt};
-            $acc->{epoch} = $rec->{epoch};
+            $acc->{date} = $rec->{date};
+            $acc->{time} = $rec->{time};
             $acc->{amount} += $rec->{amount};
             $acc->{value} += $rec->{value};
             $acc->{rate} = $acc->{value} / $acc->{amount};
@@ -113,64 +140,63 @@ if (1) { # Accumulate market orders within 24 hours
         }
         else {
             if ( $acc->{count}) { #We have something in the accumulator so print it, then reset the acc
-                my $date = $acc->{dt}->dmy();
-                my $time = $acc->{dt}->hms();
-                print "$acc->{type},$acc->{subtype},$date,$time,$acc->{firstepoch},$acc->{epoch},$acc->{account},$acc->{debitaccount},$acc->{creditaccount},$acc->{amount},$acc->{amountccy},$acc->{value},$acc->{valueccy},$acc->{rate},$acc->{rateccy},$acc->{fee},$acc->{feeccy},$acc->{count}\n";
-                $acc = {count => 0};
+                $acc = {count => 0}; #reinitialise
                 redo; # start from the top of the loop again - needed if multiple BUY records follow multiple SELL records in order to re-initialise the accumulator
             }
-            # If we don't have anything in the accumulator, just print the current rec            
-            print "$rec->{type},$rec->{subtype},$date,$time,$epoch,$epoch,$rec->{account},$rec->{debitaccount},$rec->{creditaccount},$rec->{amount},$rec->{amountccy},$rec->{value},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},1\n";
         }
-#        if ($feeacc->{count} > 0 and $rec->{epoch} - $feeacc->{firstepoch} > 30*24*60*60) { #fees have accumulated for 30 days
-#        	# print a fee record
-#        	foreach my $ccy (keys %$feeacc) {
-#        		next unless length($ccy) == 3;
-#        		my $debitaccount = $BananaMapping{"$owner,BitstampFee,$ccy"};
-#        		my $amount = $feeacc->{$ccy};
-#            	print "Fee,Fee,$feeacc->{date},$feeacc->{time},$feeacc->{firstepoch},$rec->{epoch},$debitaccount,$debitaccount,,$amount,$ccy,$amount,$ccy,,,,,$feeacc->{count}\n";
-#				$feeacc = {"count" => 0}; # reinitialise feeacc
-#            }
-#        }
 	}
 }
 
 
 if (1) { # Accumulate fees to end of month
     my $feeacc = {'count' => 0}; # initialise the fee accumulator
-    print "Type,Subtype,Date,Time,FirstEpoch,LastEpoch,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
-    foreach my $rec (@$data) {
+#    print "Type,Subtype,Date,Time,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
+    foreach my $rec (@$data1) {
+    	next if $rec->{fee} == 0; # ignore records that don't have a fee
         my $date = $rec->{dt}->dmy();
         my $time = $rec->{dt}->hms();
-        my $epoch = $rec->{dt}->epoch();
-        if ($rec->{fee} > 0) {
-        	$feeacc->{$rec->{feeccy}} += $rec->{fee};
-        	$feeacc->{count}++;
-        	$feeacc->{firstepoch} ||= $rec->{epoch};
-        	$feeacc->{date} ||= $date;
-        	$feeacc->{time} ||= $time;
-        }
-        if ($feeacc->{count} > 0 and $rec->{epoch} - $feeacc->{firstepoch} > 30*24*60*60) { #fees have accumulated for 30 days
-        	# print a fee record
-        	foreach my $ccy (keys %$feeacc) {
-        		next unless length($ccy) == 3;
-        		my $debitaccount = $BananaMapping{"$owner,BitstampFee,$ccy"};
-        		my $amount = $feeacc->{$ccy};
-            	print "Fee,Fee,$feeacc->{date},$feeacc->{time},$feeacc->{firstepoch},$rec->{epoch},MainAccount,$debitaccount,,$amount,$ccy,$amount,$ccy,,,,,$feeacc->{count}\n";
-				$feeacc = {"count" => 0}; # reinitialise feeacc
-            }
-        }
+        my $month = $rec->{dt}->month() ."-" . $rec->{dt}->year();
+        if ($feeacc->{count} == 0) {
+	        $feeacc = dclone($rec);
+	        $feeacc->{subtype} = "Fee";
+	       	$feeacc->{amountccy} = $rec->{feeccy};
+	       	$feeacc->{amount} = $rec->{fee};
+	       	$feeacc->{debitaccount} = $BananaMapping{"$owner,BitstampFee,$rec->{feeccy}"};
+	       	$feeacc->{creditaccount} = "";
+	       	$feeacc->{month} = $month;
+	       	$feeacc->{date} = $date;
+	       	$feeacc->{time} = $time;
+	       	$feeacc->{count}++;
+	        push @$data3, $feeacc;
+	    }
+        elsif ($feeacc->{count} > 0 and 
+        		$feeacc->{type} eq $rec->{type} and
+	       		$feeacc->{amountccy} eq $rec->{feeccy} and
+        		$month eq $feeacc->{month}
+        		) 
+        	{ 
+		        	# accumulate this fee record
+			       	$feeacc->{amount} += $rec->{fee};
+			       	$feeacc->{count}++;
+		}
+		else {
+			$feeacc = {"count" => 0}; # reinitialise feeacc
+			redo;
+		}
+		       	
 	}
 }
-  
-  
-if (0) { # Print every record
-    print "Type,Subtype,Date,Time,Epoch,Account,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
-    for my $rec (@$data) {
-        my $date = $rec->{dt}->dmy();
-        my $time = $rec->{dt}->hms();
-        my $epoch = $rec->{dt}->epoch();
-        print "$rec->{type},$rec->{subtype},$date,$time,$epoch,$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{value},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy}\n";
-    }
 
+
+if (1) {
+    print "Type,Subtype,Date,Time,Account,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
+    for my $rec (@$data2, @$data3) {
+       	print "$rec->{type},$rec->{subtype},$rec->{date},$rec->{time},MainAccount,$rec->{debitaccount},,$rec->{amount},$rec->{amountccy},,,,,,,$rec->{count}\n";
+	}
 }
+
+
+  
+#print Dumper $data2;
+  
+
