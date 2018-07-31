@@ -15,6 +15,7 @@ use Storable qw(dclone);
 # Fourth, process the accumulated buys and sells to produce 2 records for each market order. One is the Debit Cash record, other is the Credit ETH
 
 # TBD - process USD/GBP exchange rates cable.dat
+# TBD - process Internal Txns (contract executions) eg 0x793C64E8D1c70DD1407Bca99C8A97eA8eb662ECc
 
 
 
