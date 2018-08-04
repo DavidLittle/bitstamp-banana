@@ -5,6 +5,8 @@ use DateTime;
 #use Parse::CSV;
 use Data::Dumper;
 use Storable qw(dclone);
+use vars qw(%opt);
+use Getopt::Long;
 
 # Process a Bitstamp export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
 # Program works in several stages:
@@ -17,15 +19,32 @@ use Storable qw(dclone);
 # TBD - process USD/GBP exchange rates cable.dat
 # TBD - process Internal Txns (contract executions) eg 0x793C64E8D1c70DD1407Bca99C8A97eA8eb662ECc
 
+# Commandline args
+GetOptions('d:s' => \$opt{datadir}, # Data Directory address
+			'g:s' => \$opt{g}, # 
+			'h' => \$opt{h}, # 
+			'key:s' => \$opt{key}, # API key to access etherscan.io
+			'o:s' => \$opt{owner}, # 
+			'start:s' => \$opt{start}, # starting address
+			'trans:s' => \$opt{trans}, # name of transactions CSV file
+			'cablefile:s' => \$opt{cablefile}, # filename of CSV file with USD GBP rates
+);
+
+$opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
+$opt{desc} ||= "AddressDescriptions.dat";
+$opt{key} ||= ''; # from etherscan.io
+$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
+$opt{start} ||= "";
+$opt{trans} ||= "Transactions.csv";
+$opt{cablefile} ||= "Cable.dat";
+
 
 
 my %M = ('Jan'=>1,'Feb'=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,"Jul"=>7,"Aug"=>8,"Sep"=>9,"Oct"=>10,"Nov"=>11,"Dec"=>12);
-my $data1; # parsed input CSV file, with mapped banana account codes
 my $data2; # consecutive Buy and Sell records accumulated over 24 hour window
 my $data3; # fee records appended
 
 my $owner = "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
-my $cablefile = "Cable.dat";
 my $cable = {}; # hash keyed on date containing daily USD/GBP exchange rates
 my %BananaMapping = (
     "David,Main Account,BTC" => 10100,
@@ -38,120 +57,131 @@ my %BananaMapping = (
 );
 
 # Read in FX rates
-my $cab = undef;
-open($cab, $cablefile) || die "Can't open $cablefile for reading: $!";
-while(<$cab>) {
-    s/\r//; #Remove carriage return
-	chomp;
-	next if $_ =~ /^#/; #skip comment lines
-	my($day, $month, $year, $rate) = split(/\s/);
-	my $dt = DateTime->new(year => $year, month => $M{$month}, day => $day, hour => 0, minute => 0, second => 0, time_zone => "UTC");
-	$cable->{$dt->dmy("/")} = $rate;
-#	print "$day, $month, $year, $rate " . $dt->dmy() . "\n";
+sub readFXrates {
+	my $cab = undef;
+	open($cab, $opt{cablefile}) || die "Can't open $opt{cablefile} for reading: $!";
+	while(<$cab>) {
+		s/\r//; #Remove carriage return
+		chomp;
+		next if $_ =~ /^#/; #skip comment lines
+		my($day, $month, $year, $rate) = split(/\s/);
+		my $dt = DateTime->new(year => $year, month => $M{$month}, day => $day, hour => 0, minute => 0, second => 0, time_zone => "UTC");
+		$cable->{$dt->dmy("/")} = $rate;
+	#	print "$day, $month, $year, $rate " . $dt->dmy() . "\n";
+	}
 }
 #qprint "Rate for 19-07-2018 is $cable->{'19-07-2018'}\n";
 
-
-my $filename = $ARGV[0] || "Transactions.csv";
-my $in = undef;
-open($in, $filename) || die "Can't open $filename for reading: $!";
-while(<$in>) {
-    s/\r//; #Remove carriage return
-    chomp; #Remove any linefeed
-    if ($. == 1) { #First line - headers
-        #print "Type,Subtype,Date,Time,Account,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
-    } else {
-        # Timestamp has spaces, commas and dots embedded, and is surrounded with double quotes so we'll process it in stages
-        my ($type, $timestamp, $rest) = m/([a-zA-Z]+),"(.*)",(.*)/;
-        # Break up the timestamp into its component parts
-        my ($month, $day, $year, $time, $ampm) = split(/ /, $timestamp);
-        my ($hour, $min) = split(/:/, $time);
-        $year =~ s/,//;
-        $month =~ s/\.//;
-        $day =~ s/,//;
-        $hour += 12 if ($ampm eq "PM" && $hour < 12);
-        my $dt = DateTime->new(year => $year, month => $M{$month}, day => $day, hour => $hour, minute => $min, second => 0, time_zone => "UTC");
-        # Now split the rest of the line on comma delimiter
-        my ($account, $amountx, $valuex, $ratex, $feex, $subtype) = split(/,/, $rest);
-        my ($amount, $amountccy) = split(/ /, $amountx);
-        my ($value, $valueccy) = split(/ /, $valuex);
-        my ($rate, $rateccy) = split(/ /, $ratex);
-        my ($fee, $feeccy) = split(/ /, $feex);
-        my $rec = {};
-        $rec->{type} = $type;
-        $rec->{subtype} = $subtype;
-        $rec->{dt} = $dt;
-        $rec->{date} = $dt->dmy("/");
-        $rec->{time} = $dt->hms();
-        $rec->{account} = $account;
-        $rec->{amount} = $amount;
-        $rec->{amountccy} = $amountccy;
-        $rec->{value} = $value;
-        $rec->{valueccy} = $valueccy;
-        $rec->{rate} = $rate;
-        $rec->{rateccy} = $rateccy;
-        $rec->{fee} = $fee;
-        $rec->{feeccy} = $feeccy;
-        if ($type eq "Deposit" || $type eq "Card Deposit") {
-            $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-        } elsif ($type eq "Withdrawal") {
-            $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-        } elsif ($type eq "Market" and $subtype eq "Buy") {
-            $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-            $rec->{creditaccount} = $BananaMapping{"$owner,$account,$valueccy"};
-        } elsif ($type eq "Market" and $subtype eq "Sell") {
-            $rec->{debitaccount} = $BananaMapping{"$owner,$account,$valueccy"};
-            $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-        }
-        $rec->{USDvalue} = 0;
-		$rec->{USDvalue} = $amount if $rec->{amountccy} eq 'USD';
-		$rec->{USDvalue} = $value if $rec->{valueccy} eq 'USD';
-		$rec->{GBPvalue} = $rec->{USDvalue} / $cable->{$rec->{date}};
-        push @$data1, $rec;
-        #print "$type,$subtype,$day-$month-$year,$hour:$min:00,$account,$amount,$amountccy,$value,$valueccy,$rate,$rateccy,$fee,$feeccy\n";
-    }
-}
-
-
-if (1) { # Accumulate market orders within 24 hours
-		 # Accumulate fees to end of month
-		 # Deposits and withdrawals do not get accumulated
-    my $acc = {'count' => 0}; #initialise the accumulator for trades
-    foreach my $rec (@$data1) {
-        if ($acc->{count} == 0) {
-            $acc = dclone($rec); # If accumulator is empty then first record goes into the accumulator (deep copy, so that @data1 is preserved)
-            $acc->{count}++;
-	        push @$data2, $acc;
-        }
-        elsif ($rec->{type} eq 'Market' and 
-                $rec->{type} eq $acc->{type} and 
-                $rec->{subtype} eq $acc->{subtype} and 
-                $rec->{account} eq $acc->{account} and 
-                $rec->{amountccy} eq $acc->{amountccy} and 
-                $rec->{valueccy} eq $acc->{valueccy} and 
-                $rec->{date} eq $acc->{date} ) 
-        {
-            # Add this record to the accumulator
-            $acc->{date} = $rec->{date};
-            $acc->{time} = $rec->{time};
-            $acc->{amount} += $rec->{amount};
-            $acc->{value} += $rec->{value};
-            $acc->{rate} = $acc->{value} / $acc->{amount};
-            $acc->{fee} += $rec->{fee};
-            $acc->{count}++;
-        }
-        else {
-            if ( $acc->{count}) { #We have something in the accumulator so print it, then reset the acc
-                $acc = {count => 0}; #reinitialise
-                redo; # start from the top of the loop again - needed if multiple BUY records follow multiple SELL records in order to re-initialise the accumulator
-            }
-        }
+sub readBitstampTransactions {
+	my $filename = "$opt{datadir}/$opt{trans}";
+	my $in = undef;
+	my $data = [];
+	open($in, $filename) || die "Can't open $filename for reading: $!";
+	while(<$in>) {
+		s/\r//; #Remove carriage return
+		chomp; #Remove any linefeed
+		if ($. == 1) { #First line - headers
+		    #print "Type,Subtype,Date,Time,Account,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
+		} else {
+		    # Timestamp has spaces, commas and dots embedded, and is surrounded with double quotes so we'll process it in stages
+		    my ($type, $timestamp, $rest) = m/([a-zA-Z]+),"(.*)",(.*)/;
+		    # Break up the timestamp into its component parts
+		    my ($month, $day, $year, $time, $ampm) = split(/ /, $timestamp);
+		    my ($hour, $min) = split(/:/, $time);
+		    $year =~ s/,//;
+		    $month =~ s/\.//;
+		    $day =~ s/,//;
+		    $hour += 12 if ($ampm eq "PM" && $hour < 12);
+		    my $dt = DateTime->new(year => $year, month => $M{$month}, day => $day, hour => $hour, minute => $min, second => 0, time_zone => "UTC");
+		    # Now split the rest of the line on comma delimiter
+		    my ($account, $amountx, $valuex, $ratex, $feex, $subtype) = split(/,/, $rest);
+		    my ($amount, $amountccy) = split(/ /, $amountx);
+		    my ($value, $valueccy) = split(/ /, $valuex);
+		    my ($rate, $rateccy) = split(/ /, $ratex);
+		    my ($fee, $feeccy) = split(/ /, $feex);
+		    my $rec = {};
+		    $rec->{type} = $type;
+		    $rec->{subtype} = $subtype;
+		    $rec->{dt} = $dt;
+		    $rec->{date} = $dt->dmy("/");
+		    $rec->{time} = $dt->hms();
+		    $rec->{account} = $account;
+		    $rec->{amount} = $amount;
+		    $rec->{amountccy} = $amountccy;
+		    $rec->{value} = $value;
+		    $rec->{valueccy} = $valueccy;
+		    $rec->{rate} = $rate;
+		    $rec->{rateccy} = $rateccy;
+		    $rec->{fee} = $fee;
+		    $rec->{feeccy} = $feeccy;
+		    if ($type eq "Deposit" || $type eq "Card Deposit") {
+		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		    } elsif ($type eq "Withdrawal") {
+		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		    } elsif ($type eq "Market" and $subtype eq "Buy") {
+		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$valueccy"};
+		    } elsif ($type eq "Market" and $subtype eq "Sell") {
+		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$valueccy"};
+		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		    }
+		    $rec->{USDvalue} = 0;
+			$rec->{USDvalue} = $amount if $rec->{amountccy} eq 'USD';
+			$rec->{USDvalue} = $value if $rec->{valueccy} eq 'USD';
+			$rec->{GBPvalue} = $rec->{USDvalue} / $cable->{$rec->{date}};
+		    push @$data, $rec;
+		    #print "$type,$subtype,$day-$month-$year,$hour:$min:00,$account,$amount,$amountccy,$value,$valueccy,$rate,$rateccy,$fee,$feeccy\n";
+		}
 	}
+	return $data;
 }
 
-if (1) { # Split Market Buys and Sells into two records one for the DebitAccount and one for the CreditAccount (dual entry bookkeeping)
+# Accumulate market orders within 24 hours
+# Accumulate fees to end of month
+# Deposits and withdrawals do not get accumulated
+sub accumulateMktOrders {
+	my $data = shift;
+	my $acc_data = [];
+	my $acc = {'count' => 0}; #initialise the accumulator for trades
+	foreach my $rec (@$data) {
+	    if ($acc->{count} == 0) {
+	        $acc = dclone($rec); # If accumulator is empty then first record goes into the accumulator (deep copy, so that @data1 is preserved)
+	        $acc->{count}++;
+		    push @$acc_data, $acc;
+	    }
+	    elsif ($rec->{type} eq 'Market' and 
+	            $rec->{type} eq $acc->{type} and 
+	            $rec->{subtype} eq $acc->{subtype} and 
+	            $rec->{account} eq $acc->{account} and 
+	            $rec->{amountccy} eq $acc->{amountccy} and 
+	            $rec->{valueccy} eq $acc->{valueccy} and 
+	            $rec->{date} eq $acc->{date} ) 
+	    {
+	        # Add this record to the accumulator
+	        $acc->{date} = $rec->{date};
+	        $acc->{time} = $rec->{time};
+	        $acc->{amount} += $rec->{amount};
+	        $acc->{value} += $rec->{value};
+	        $acc->{rate} = $acc->{value} / $acc->{amount};
+	        $acc->{fee} += $rec->{fee};
+	        $acc->{count}++;
+	    }
+	    else {
+	        if ( $acc->{count}) { #We have something in the accumulator so print it, then reset the acc
+	            $acc = {count => 0}; #reinitialise
+	            redo; # start from the top of the loop again - needed if multiple BUY records follow multiple SELL records in order to re-initialise the accumulator
+	        }
+	    }
+	}
+	return $acc_data;
+}
+
+# Split Market Buys and Sells into two records one for the DebitAccount and one for the CreditAccount (dual entry bookkeeping)
+sub splitMarketOrders { 
+	my $data = shift;
+	my $split_data = [];
 #    print "Type,Subtype,Date,Time,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
-    foreach my $rec (@$data2) {
+    foreach my $rec (@$data) {
     	if ($rec->{type} eq 'Market') {
     		if ($rec->{subtype} eq 'Buy') { # eg Buy ETH therefore ETH balance increases (debit) and USD balance decreases (credit)
     			my $debit = dclone($rec);
@@ -164,8 +194,8 @@ if (1) { # Split Market Buys and Sells into two records one for the DebitAccount
     			$credit->{amount} = $rec->{value};
     			$credit->{amountccy} = $rec->{valueccy};
 
-				push @$data3, $debit;
-				push @$data3, $credit;
+				push @$split_data, $debit;
+				push @$split_data, $credit;
     		}
     		elsif ($rec->{subtype} eq 'Sell') { # eg Sell ETH therefore ETH balance reduces (credit) and USD balance increases (debit)
     			my $debit = dclone($rec);
@@ -178,24 +208,27 @@ if (1) { # Split Market Buys and Sells into two records one for the DebitAccount
     			$credit->{amount} = $rec->{amount};
     			$credit->{amountccy} = $rec->{amountccy};
 
-				push @$data3, $debit;
-				push @$data3, $credit;
+				push @$split_data, $debit;
+				push @$split_data, $credit;
     		}
     		else {
     			die "Unexpected subtype";
     		}
 		}
 		else { #Not a Buy or sell - just push it onto the output array
-			push @$data3, $rec;
+			push @$split_data, $rec;
 		}
 	}
+	return $split_data;
 }
 
-
-if (1) { # Accumulate fees to end of month
+# Accumulate fees to end of month
+sub accumulateFees {
+	my $data = shift;
+	my $fees = [];
     my $feeacc = {'count' => 0}; # initialise the fee accumulator
 #    print "Type,Subtype,Date,Time,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
-    foreach my $rec (@$data1) {
+    foreach my $rec (@$data) {
     	next if $rec->{fee} == 0; # ignore records that don't have a fee
         my $date = $rec->{dt}->dmy("/");
         my $time = $rec->{dt}->hms();
@@ -215,7 +248,7 @@ if (1) { # Accumulate fees to end of month
 	        $feeacc->{USDvalue} = 0;
 			$feeacc->{USDvalue} = $feeacc->{amount} if $feeacc->{amountccy} eq 'USD';
 			$feeacc->{GBPvalue} = $feeacc->{USDvalue} / $cable->{$date};
-	        push @$data3, $feeacc;
+	        push @$fees, $feeacc;
 	    }
         elsif ($feeacc->{count} > 0 and 
         		$feeacc->{type} eq $rec->{type} and
@@ -235,16 +268,26 @@ if (1) { # Accumulate fees to end of month
 		}
 		       	
 	}
+	return $fees;
 }
 
 
-if (1) {
+sub printTransactions {
+	my $trans = shift;
     print "Type,Subtype,Date,Time,Account,Amount,AmountCcy,USDValue,GBPValue,Count\n";
-    for my $rec (@$data3) {
+    for my $rec (@$trans) {
        	print "$rec->{type},$rec->{subtype},$rec->{date},$rec->{time},$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{USDvalue},$rec->{GBPvalue},$rec->{count}\n";
 	}
 }
 
+# Main program
+readFXrates();
+my $d = readBitstampTransactions();
+my $a = accumulateMktOrders($d);
+my $s = splitMarketOrders($a);
+my $f = accumulateFees($d);
+push (@$s, @$f);
+printTransactions($s);
 
   
 #print Dumper $data1;

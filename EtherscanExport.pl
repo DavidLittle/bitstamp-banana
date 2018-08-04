@@ -28,6 +28,7 @@ GetOptions('d:s' => \$opt{datadir}, # Data Directory address
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'o:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
+			'trans:s' => \$opt{trans}, # starting address
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
@@ -35,6 +36,7 @@ $opt{desc} ||= "AddressDescriptions.dat";
 $opt{key} ||= 'TQPWAY66XX2SXFGPTT7677TENHFFQTMGNH'; # from etherscan.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{start} ||= "0x34a85d6d243fb1dfb7d1d2d44f536e947a4cee9e";
+$opt{trans} ||= "EtherTransactions.dat";
 
 # Global variables
 
@@ -46,7 +48,7 @@ my %BananaMapping = (
 my $url = "https://api.etherscan.io/api?";
 my $txlist = "${url}module=account&action=txlist&startblock=0&endblock=99999999&sort=asc&apikey=$opt{key}"; # add &address=$address
 my $txlistinternal = "${url}module=account&action=txlistinternal&startblock=0&endblock=99999999&sort=asc&apikey=$opt{key}"; # add &address=$address
-my $balance = "${url}module=account&action=balance&tag=latest&apikey=$opt{key}";
+my $balanceurl = "${url}module=account&action=balance&tag=latest&apikey=$opt{key}";
 
 
 # Subroutines
@@ -107,7 +109,29 @@ sub getJson {
 }
 
 sub getJsonBalance {
-	return 0;
+	my $address = shift;
+	return 0 unless $address =~ m/^0x/;
+	my $action = 'balance'; # txlist or txlistinternal
+	my $cachefile = "$opt{datadir}/$action$address.json"; # reads from cache file if one exists. Otherwise calls api and stores to cache file
+	my $result = 0;
+	if (-e $cachefile) {
+		$result = retrieve($cachefile);
+		return $$result;
+	}
+	my $url = "$balanceurl&address=$address";
+	my $ua = new LWP::UserAgent;
+	$ua->agent("banana/1.0");
+	my $request = new HTTP::Request("GET", $url);
+	my $response = $ua->request($request);
+	my $content = $response->content;
+	if ($content) {
+		my $data = parse_json($content);
+		if ($data->{message} eq "OK" and $data->{status} == 1) {
+			$result = $data->{result};
+			store(\$result, $cachefile);
+		}
+	}	
+	return $result;
 }
 
 # addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
@@ -205,7 +229,7 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		$processed->{$tran->{hash}} = 1;
 		my ($to, $from) = ($tran->{to}, $tran->{from});
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
-		$tran->{source} = 'EtherscanExport.pl'; # to identify the source in Banana
+		$tran->{source} = 'Etherscan'; # to identify the source in Banana
 		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
 		$tran->{toDesc} = addressDesc($to) || "Unknown";
 		$tran->{fromDesc} = addressDesc($from) || "Unknown";
@@ -214,6 +238,7 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		$tran->{Value} = $tran->{value} / 1e18; # Value in ETH
 		$tran->{txnFee} = $tran->{gasPrice} * $tran->{gasUsed}; # txn fee in Wei
 		$tran->{TxnFee} = $tran->{txnFee} / 1e18; # txnfee in ETH
+		$tran->{ccy} = 'ETH';
 		push @$transactions, $tran;
 
 #		readJson($from, $transactions) unless $processed->{$from};
@@ -244,7 +269,7 @@ sub printBalances {
 	foreach my $address (sort keys %$balances) {
 		next if addressDesc($address,'Follow') eq 'N';
 		my $bal1 = $balances->{$address} / 1e18;
-		my $bal2 = getJsonBalance($address);
+		my $bal2 = getJsonBalance($address) / 1e18;
 		say "$address $bal1 $bal2 " . addressDesc($address);
 	}
 }
@@ -256,30 +281,38 @@ sub printTransactions {
 		next if $processed->{$t->{hash}};
 		$processed->{$t->{hash}} = 1;
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
-		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'Value'} $t->{toS} $t->{toDesc}\n";
+		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'Value'} ETH $t->{toS} $t->{toDesc}\n";
 	}
 }
+
+sub saveTransactions {
+	my $trans = shift;
+	store($trans, "$opt{datadir}/$opt{trans}");
+}
+
 
 # Main Program
 printHelp if $opt{h};
 print "Start address $opt{start}\n";
 addressDesc($opt{start}); # initialise the addresses
+getJsonBalance('txnFee');
 
-say 'File transactions:';
-my $tf = [];
-readEtherscan($opt{start}, $tf);
+#say 'File transactions:';
+#my $tf = [];
+#readEtherscan($opt{start}, $tf);
 #printTransactions($tf);
-my $bf = calcBalances($tf);
+#my $bf = calcBalances($tf);
 #print Dumper $bf;
-printBalances($bf);
+#printBalances($bf);
 
 say 'Json transactions:';
 my $tj = [];
 readJson($opt{start}, $tj);
-#printTransactions($tj);
-my $bj = calcBalances($tj);
+printTransactions($tj);
+saveTransactions($tj);
+#my $bj = calcBalances($tj);
 #print Dumper $bj;
-printBalances($bj);
+#printBalances($bj);
 
 
 
