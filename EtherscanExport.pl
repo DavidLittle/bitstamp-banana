@@ -26,7 +26,7 @@ GetOptions('d:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'o:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
 			'trans:s' => \$opt{trans}, # starting address
 );
@@ -62,7 +62,7 @@ Options
 	[ --desc file ]	    - file containing address descriptions
 	[ --help ]          - print this help and exit
 	[ --key apikey ]    - get an API key from https://etherscan.io/myapikey
-	[ --owner apikey ]  - get an API key from https://etherscan.io/myapikey
+	[ --owner name ]    - owner of the address from AddressDescription file
 	[ --start address ] - starting address to retrieve and follow transaction train
 	
 	
@@ -242,7 +242,7 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		push @$transactions, $tran;
 
 #		readJson($from, $transactions) unless $processed->{$from};
-		readJson($to, $transactions) unless $processed->{$to};
+		readJson($to, $transactions) if addressDesc($to,'Owner') eq $opt{owner} and not $processed->{$to};
 	}
 			
 	return;

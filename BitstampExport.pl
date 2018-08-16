@@ -290,6 +290,4 @@ push (@$s, @$f);
 printTransactions($s);
 
   
-#print Dumper $data1;
-  
 

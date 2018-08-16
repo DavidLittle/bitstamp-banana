@@ -46,17 +46,17 @@ sub enrichShapeShiftTransactions {
 	
 	# create dictionary of transactions keyed on txhash
 	foreach my $a (@$all) {
-		if ($a->{to} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found it 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
+#		if ($a->{to} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found it 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
 		$hdict{$a->{hash}} = $a;
 		$adict{$a->{to}} = $a;
 		$adict{$a->{from}} = $a;
 	}
-	print Dumper $adict{'0x85a9962fbc35549afec891c285b3fe057ec334cc'};
+#	print Dumper $adict{'0x85a9962fbc35549afec891c285b3fe057ec334cc'};
 	
 	# enrich shapeshit transactions from the dict
 	my %count;
 	foreach my $t (@$st) {
-		if ($t->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found IT 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
+#		if ($t->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found IT 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
 		$count{all}++;
 		if ($t->{status} eq 'error') {
 			$count{error}++;
@@ -173,7 +173,7 @@ push(@$all, @$ct, @$et);
 my $richer = enrichShapeShiftTransactions($st, $all);
 push(@$all, @$richer);
 printTransactions($all);
-foreach my $i (@$st) {
-	print Dumper $i if $i->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc';
-}
+#foreach my $i (@$st) {
+#	print Dumper $i if $i->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc';
+#}
 
