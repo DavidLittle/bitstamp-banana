@@ -24,7 +24,7 @@ GetOptions('d:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'o:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
 			'trans:s' => \$opt{trans}, # name of transactions CSV file
 			'cablefile:s' => \$opt{cablefile}, # filename of CSV file with USD GBP rates
@@ -35,9 +35,13 @@ $opt{desc} ||= "AddressDescriptions.dat";
 $opt{key} ||= ''; # from etherscan.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{start} ||= "";
-$opt{trans} ||= "Transactions.csv";
-$opt{cablefile} ||= "Cable.dat";
 
+$opt{cablefile} ||= "Cable.dat";
+if ($opt{owner} eq 'David') {
+	$opt{trans} ||= "Transactions.csv";
+} elsif ($opt{owner} eq 'Richard') {
+	$opt{trans} ||= "RichardsBitstampTransactions.csv";
+}
 
 
 my %M = ('Jan'=>1,'Feb'=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,"Jul"=>7,"Aug"=>8,"Sep"=>9,"Oct"=>10,"Nov"=>11,"Dec"=>12);
@@ -128,7 +132,12 @@ sub readBitstampTransactions {
 		    $rec->{USDvalue} = 0;
 			$rec->{USDvalue} = $amount if $rec->{amountccy} eq 'USD';
 			$rec->{USDvalue} = $value if $rec->{valueccy} eq 'USD';
-			$rec->{GBPvalue} = $rec->{USDvalue} / $cable->{$rec->{date}};
+			if ($cable->{$rec->{date}}) {
+				$rec->{GBPvalue} = $rec->{USDvalue} / $cable->{$rec->{date}};
+			}
+			else {
+				die "No cable rate for $rec->{date}";
+			}
 		    push @$data, $rec;
 		    #print "$type,$subtype,$day-$month-$year,$hour:$min:00,$account,$amount,$amountccy,$value,$valueccy,$rate,$rateccy,$fee,$feeccy\n";
 		}
