@@ -74,7 +74,7 @@ sub readFXrates {
 	#	print "$day, $month, $year, $rate " . $dt->dmy() . "\n";
 	}
 }
-#qprint "Rate for 19-07-2018 is $cable->{'19-07-2018'}\n";
+#print "Rate for 19-07-2018 is $cable->{'19-07-2018'}\n";
 
 sub readBitstampTransactions {
 	my $filename = "$opt{datadir}/$opt{trans}";
