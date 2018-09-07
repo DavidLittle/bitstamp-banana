@@ -173,6 +173,8 @@ sub accumulateMktOrders {
 	        $acc->{value} += $rec->{value};
 	        $acc->{rate} = $acc->{value} / $acc->{amount};
 	        $acc->{fee} += $rec->{fee};
+	        $acc->{USDvalue} += $rec->{USDvalue};
+	        $acc->{GBPvalue} += $rec->{GBPvalue};
 	        $acc->{count}++;
 	    }
 	    else {
@@ -289,14 +291,38 @@ sub printTransactions {
 	}
 }
 
+sub printMySQLTransactions {
+	my $trans = shift;
+    print "TradeType,Subtype,DateTime,Account,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
+    for my $rec (@$trans) {
+    	my $dt = $rec->{dt};
+    	my $datetime = $dt->dmy("-") ." $rec->{time}";
+    	$rec->{subtype} ||= 'NULL';
+    	$rec->{value} ||= 'NULL';
+    	$rec->{valueccy} ||= 'NULL';
+    	$rec->{rate} ||= 'NULL';
+    	$rec->{rateccy} ||= 'NULL';
+    	$rec->{fee} ||= 'NULL';
+    	$rec->{feeccy} ||= 'NULL';
+    	
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{value},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy}\n";
+	}
+}
+
 # Main program
 readFXrates();
-my $d = readBitstampTransactions();
-my $a = accumulateMktOrders($d);
-my $s = splitMarketOrders($a);
-my $f = accumulateFees($d);
-push (@$s, @$f);
-printTransactions($s);
+if (0) { # Processing for banana input
+	my $d = readBitstampTransactions();
+	my $a = accumulateMktOrders($d);
+	my $s = splitMarketOrders($a);
+	my $f = accumulateFees($d);
+	push (@$s, @$f);
+	printTransactions($s);
+}
+else { # Processing for MySQL input
+	my $m = readBitstampTransactions();
+	printMySQLTransactions($m);
+}
 
   
 
