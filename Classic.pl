@@ -26,16 +26,18 @@ GetOptions('d:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'o:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
-			'trans:s' => \$opt{trans}, # starting address
+			'transCSV:s' => \$opt{trans}, # CSV file containing the transactions
+			'trans:s' => \$opt{trans}, # datafile to save the classic transactions
 );
 
 # ETC transactions are copied/pasted into ClassicTransactions.csv from gastracker.io. Reformatted here and loaded into structure for printing etc.
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
 $opt{desc} ||= "AddressDescriptions.dat";
-$opt{trans} ||= "ClassicTransactions.dat";
+$opt{transCSV} ||= "ClassicTransactions.csv"; # Used to input the transactions
+$opt{trans} ||= "ClassicTransactions.dat"; # Used to save the transactions
 #$opt{key} ||= ''; # from No API key available
 #$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 #$opt{start} ||= "";
@@ -69,7 +71,8 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 	state $processed;
 	my $aoh = [];
 
-	my $f = "$opt{datadir}/ClassicTransactions.csv";
+	my $f = "$opt{datadir}/$opt{transCSV}";
+	say $f;
 	if (-e $f) {
 		$aoh = csv( in => $f, headers => "auto");
 	}
