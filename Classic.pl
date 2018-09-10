@@ -39,7 +39,7 @@ $opt{desc} ||= "AddressDescriptions.dat";
 $opt{transCSV} ||= "ClassicTransactions.csv"; # Used to input the transactions
 $opt{trans} ||= "ClassicTransactions.dat"; # Used to save the transactions
 #$opt{key} ||= ''; # from No API key available
-#$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
+#$opt{owner} ||= "David"; # Owner of the ETC accounts. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 #$opt{start} ||= "";
 
 # Global variables
@@ -109,17 +109,26 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		$tran->{dt} = $dt;
 		$tran->{toDesc} = addressDesc($tran->{to}) || "Unknown";
 		$tran->{fromDesc} = addressDesc($tran->{from}) || "Unknown";
+		$tran->{owner} = addressDesc($tran->{from},"Owner");
 		$tran->{toS} = substr($tran->{to},0,6);
 		$tran->{fromS} = substr($tran->{from},0,6);
 		my ($val, $ccy) = split(/ /, $tran->{'Value'});
-		$tran->{Value} = $val;
-		$tran->{value} = $val * 1e18;
+		$tran->{valueETC} = $val;
+		$tran->{valueSat} = $val * 1e18;
 		$tran->{ccy} = $ccy eq "ether" ? "ETC" : "Unknown";
 		$tran->{toDesc} .= $tran->{to} if $tran->{toDesc} eq 'Unknown'; # to check on shapeshift
 		# Following fields are for the printMySQLTransactions
 		$tran->{type} = "Transfer";
 		$tran->{subtype} = "Classic";
+		$tran->{account} = $tran->{from};
+		$tran->{toaccount} = $tran->{to};
+		$tran->{amount} = $tran->{ValueETC}; # Should amount and value both be the same?
 		$tran->{amountccy} = "ETC";
+		$tran->{valueccy} = "ETC";
+		$tran->{rate} = 0;
+		$tran->{rateccy} = "";
+		$tran->{fee} = 0;
+		$tran->{feeccy} = "";
 		push @$transactions, $tran;
 	}
 }
@@ -131,25 +140,26 @@ sub printTransactions {
 		next if $processed->{$t->{hash}};
 		$processed->{$t->{hash}} = 1;
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
-		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'value'} $t->{ccy} $t->{toS} $t->{toDesc} $t->{to}\n";
+		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'valueSat'} $t->{ccy} $t->{toS} $t->{toDesc} $t->{to}\n";
 	}
 }
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
-    	$rec->{value} ||= 'NULL';
+    	$rec->{toaccount} ||= 'NULL';
+    	$rec->{valueETC} ||= 'NULL';
     	$rec->{valueccy} ||= 'NULL';
     	$rec->{rate} ||= 'NULL';
     	$rec->{rateccy} ||= 'NULL';
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
-    	
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{value},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy}\n";
+    	$rec->{owner} ||= 'NULL';
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueETC},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
 	}
 }
 
@@ -163,8 +173,8 @@ sub calcBalances {
 		#$balances->{'txnFee'} += $t->{'txnFee'};
 		#$balances->{$t->{from}} -= $t->{'txnFee'}; # process tx fee even if this is an error transaction
 		#next if $t->{isError}; # Typically out of gas (make sure fees are processed but principal is not.
-		$balances->{$t->{from}} -= $t->{'Value'};
-		$balances->{$t->{to}} += $t->{'Value'};
+		$balances->{$t->{from}} -= $t->{'ValueETC'};
+		$balances->{$t->{to}} += $t->{'ValueETC'};
 	}
 	return $balances;
 }
