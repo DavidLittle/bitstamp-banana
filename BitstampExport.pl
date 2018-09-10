@@ -20,9 +20,9 @@ use Getopt::Long;
 # TBD - process Internal Txns (contract executions) eg 0x793C64E8D1c70DD1407Bca99C8A97eA8eb662ECc
 
 # Commandline args
-GetOptions('d:s' => \$opt{datadir}, # Data Directory address
+GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
-			'h' => \$opt{h}, # 
+			'help' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
@@ -296,7 +296,7 @@ sub printMySQLTransactions {
     print "TradeType,Subtype,DateTime,Account,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
-    	my $datetime = $dt->dmy("-") ." $rec->{time}";
+    	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
     	$rec->{value} ||= 'NULL';
     	$rec->{valueccy} ||= 'NULL';

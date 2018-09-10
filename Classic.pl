@@ -22,9 +22,9 @@ use Getopt::Long;
 # etherx.com - broken
 
 # Commandline args
-GetOptions('d:s' => \$opt{datadir}, # Data Directory address
+GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
-			'h' => \$opt{h}, # 
+			'help' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
@@ -69,10 +69,10 @@ sub addressDesc {
 sub readClassicTransactions { # take an address return a pointer to array of hashes containing the transactions found on that address
 	my ($transactions) = @_;
 	state $processed;
-	my $aoh = [];
+	my $aoh = []; #Array of hashes
 
 	my $f = "$opt{datadir}/$opt{transCSV}";
-	say $f;
+#	say $f;
 	if (-e $f) {
 		$aoh = csv( in => $f, headers => "auto");
 	}
@@ -106,6 +106,7 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		$tran->{source} = 'Gastrackr'; # to identify the source in Banana
 		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
 		$tran->{timeStamp} = $dt->epoch();
+		$tran->{dt} = $dt;
 		$tran->{toDesc} = addressDesc($tran->{to}) || "Unknown";
 		$tran->{fromDesc} = addressDesc($tran->{from}) || "Unknown";
 		$tran->{toS} = substr($tran->{to},0,6);
@@ -115,6 +116,10 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		$tran->{value} = $val * 1e18;
 		$tran->{ccy} = $ccy eq "ether" ? "ETC" : "Unknown";
 		$tran->{toDesc} .= $tran->{to} if $tran->{toDesc} eq 'Unknown'; # to check on shapeshift
+		# Following fields are for the printMySQLTransactions
+		$tran->{type} = "Transfer";
+		$tran->{subtype} = "Classic";
+		$tran->{amountccy} = "ETC";
 		push @$transactions, $tran;
 	}
 }
@@ -127,6 +132,24 @@ sub printTransactions {
 		$processed->{$t->{hash}} = 1;
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
 		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'value'} $t->{ccy} $t->{toS} $t->{toDesc} $t->{to}\n";
+	}
+}
+
+sub printMySQLTransactions {
+	my $trans = shift;
+    print "TradeType,Subtype,DateTime,Account,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
+    for my $rec (@$trans) {
+    	my $dt = $rec->{dt};
+    	my $datetime = $dt->datetime(" ");
+    	$rec->{subtype} ||= 'NULL';
+    	$rec->{value} ||= 'NULL';
+    	$rec->{valueccy} ||= 'NULL';
+    	$rec->{rate} ||= 'NULL';
+    	$rec->{rateccy} ||= 'NULL';
+    	$rec->{fee} ||= 'NULL';
+    	$rec->{feeccy} ||= 'NULL';
+    	
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{value},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy}\n";
 	}
 }
 
@@ -164,9 +187,10 @@ addressDesc();
 my $transactions = [];
 readClassicTransactions($transactions);
 #say Dumper $transactions;
-printTransactions($transactions);
+#printTransactions($transactions);
+printMySQLTransactions($transactions);
 my $b = calcBalances($transactions);
-printBalances($b);
-saveTransactions($transactions);
+#printBalances($b);
+#saveTransactions($transactions);
 
 
