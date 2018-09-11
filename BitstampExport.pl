@@ -38,9 +38,11 @@ $opt{start} ||= "";
 
 $opt{cablefile} ||= "Cable.dat";
 if ($opt{owner} eq 'David') {
-	$opt{trans} ||= "Transactions.csv";
+	$opt{trans} ||= "DavidsBitstampTransactions.csv";
 } elsif ($opt{owner} eq 'Richard') {
 	$opt{trans} ||= "RichardsBitstampTransactions.csv";
+} elsif ($opt{owner} eq 'Kevin') {
+	$opt{trans} ||= "KevinsBitstampTransactions.csv";
 }
 
 
@@ -48,7 +50,7 @@ my %M = ('Jan'=>1,'Feb'=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,"Jul"=>7,"Aug"=>8
 my $data2; # consecutive Buy and Sell records accumulated over 24 hour window
 my $data3; # fee records appended
 
-my $owner = "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
+my $owner = $opt{owner}; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 my $cable = {}; # hash keyed on date containing daily USD/GBP exchange rates
 my %BananaMapping = (
     "David,Main Account,BTC" => 10100,
@@ -113,15 +115,19 @@ sub readBitstampTransactions {
 		    $rec->{amount} = $amount;
 		    $rec->{amountccy} = $amountccy;
 		    $rec->{value} = $value;
+		    $rec->{valueX} = $value;
 		    $rec->{valueccy} = $valueccy;
 		    $rec->{rate} = $rate;
 		    $rec->{rateccy} = $rateccy;
 		    $rec->{fee} = $fee;
 		    $rec->{feeccy} = $feeccy;
+			$rec->{owner} = $opt{owner};
 		    if ($type eq "Deposit" || $type eq "Card Deposit") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		        $rec->{toaccount} = "Bitstamp $amountccy";
 		    } elsif ($type eq "Withdrawal") {
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		        $rec->{toaccount} = "Bitstamp $amountccy Wallet";
 		    } elsif ($type eq "Market" and $subtype eq "Buy") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$valueccy"};
@@ -293,19 +299,20 @@ sub printTransactions {
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy\n";
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
-    	$rec->{value} ||= 'NULL';
+    	$rec->{toaccount} ||= 'NULL';
+    	$rec->{valueX} ||= 'NULL';
     	$rec->{valueccy} ||= 'NULL';
     	$rec->{rate} ||= 'NULL';
     	$rec->{rateccy} ||= 'NULL';
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
-    	
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{value},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy}\n";
+    	$rec->{owner} ||= 'NULL';
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
 	}
 }
 
