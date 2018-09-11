@@ -22,7 +22,7 @@ use Getopt::Long;
 # TBD - process USD/GBP exchange rates cable.dat
 
 # Commandline args
-GetOptions('d:s' => \$opt{datadir}, # Data Directory address
+GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
@@ -35,8 +35,15 @@ $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
 $opt{desc} ||= "AddressDescriptions.dat";
 $opt{key} ||= 'TQPWAY66XX2SXFGPTT7677TENHFFQTMGNH'; # from etherscan.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
-$opt{start} ||= "0x34a85d6d243fb1dfb7d1d2d44f536e947a4cee9e";
 $opt{trans} ||= "EtherTransactions.dat";
+
+if ($opt{owner} eq 'David') {
+	$opt{start} ||= "0x34a85d6d243fb1dfb7d1d2d44f536e947a4cee9e";
+} elsif ($opt{owner} eq 'Richard') {
+	$opt{start} ||= "0xf51fded80acb502890e87369741f3722514cefff";
+} elsif ($opt{owner} eq 'Kevin') {
+	$opt{start} ||= "0x793C64E8D1c70DD1407Bca99C8A97eA8eb662ECc";
+}
 
 # Global variables
 
@@ -239,6 +246,22 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		$tran->{txnFee} = $tran->{gasPrice} * $tran->{gasUsed}; # txn fee in Wei
 		$tran->{TxnFee} = $tran->{txnFee} / 1e18; # txnfee in ETH
 		$tran->{ccy} = 'ETH';
+		# Following fields are for printMySQLTransactions
+		$tran->{type} = 'Transfer';
+		$tran->{subtype} = 'Etherscan';
+		$tran->{dt} = $dt;
+		$tran->{account} = $from;
+		$tran->{toaccount} = $to;
+		$tran->{amount} = $tran->{Value};
+		$tran->{amountccy} = $tran->{ccy};
+		$tran->{valueX} = $tran->{Value};
+		$tran->{valueccy} = $tran->{ccy};
+		$tran->{rate} = '';
+		$tran->{rateccy} = '';
+		$tran->{fee} = $tran->{TxnFee};
+		$tran->{feeccy} = $tran->{ccy};
+		$tran->{owner} = $opt{owner};
+		
 		push @$transactions, $tran;
 
 #		readJson($from, $transactions) unless $processed->{$from};
@@ -285,6 +308,25 @@ sub printTransactions {
 	}
 }
 
+sub printMySQLTransactions {
+	my $trans = shift;
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner\n";
+    for my $rec (@$trans) {
+    	my $dt = $rec->{dt};
+    	my $datetime = $dt->datetime(" ");
+    	$rec->{subtype} ||= 'NULL';
+    	$rec->{toaccount} ||= 'NULL';
+    	$rec->{valueX} ||= 'NULL';
+    	$rec->{valueccy} ||= 'NULL';
+    	$rec->{rate} ||= 'NULL';
+    	$rec->{rateccy} ||= 'NULL';
+    	$rec->{fee} ||= 'NULL';
+    	$rec->{feeccy} ||= 'NULL';
+    	$rec->{owner} ||= 'NULL';
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
+	}
+}
+
 sub saveTransactions {
 	my $trans = shift;
 	store($trans, "$opt{datadir}/$opt{trans}");
@@ -308,8 +350,8 @@ getJsonBalance('txnFee');
 say 'Json transactions:';
 my $tj = [];
 readJson($opt{start}, $tj);
-printTransactions($tj);
-saveTransactions($tj);
+printMySQLTransactions($tj);
+#saveTransactions($tj);
 #my $bj = calcBalances($tj);
 #print Dumper $bj;
 #printBalances($bj);
