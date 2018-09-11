@@ -122,9 +122,10 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		$tran->{subtype} = "Classic";
 		$tran->{account} = $tran->{from};
 		$tran->{toaccount} = $tran->{to};
-		$tran->{amount} = $tran->{ValueETC}; # Should amount and value both be the same?
+		$tran->{amount} = $tran->{valueETC}; # Should amount and value both be the same?
 		$tran->{amountccy} = "ETC";
 		$tran->{valueccy} = "ETC";
+		$tran->{valueX} = $tran->{valueETC};
 		$tran->{rate} = 0;
 		$tran->{rateccy} = "";
 		$tran->{fee} = 0;
@@ -152,14 +153,14 @@ sub printMySQLTransactions {
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
     	$rec->{toaccount} ||= 'NULL';
-    	$rec->{valueETC} ||= 'NULL';
+    	$rec->{valueX} ||= 'NULL';
     	$rec->{valueccy} ||= 'NULL';
     	$rec->{rate} ||= 'NULL';
     	$rec->{rateccy} ||= 'NULL';
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
     	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueETC},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
 	}
 }
 
