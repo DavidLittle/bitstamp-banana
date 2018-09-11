@@ -38,8 +38,8 @@ $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
 $opt{desc} ||= "AddressDescriptions.dat";
 $opt{transCSV} ||= "ClassicTransactions.csv"; # Used to input the transactions
 $opt{trans} ||= "ClassicTransactions.dat"; # Used to save the transactions
+$opt{owner} ||= "David"; # Owner of the ETC accounts. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 #$opt{key} ||= ''; # from No API key available
-#$opt{owner} ||= "David"; # Owner of the ETC accounts. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 #$opt{start} ||= "";
 
 # Global variables
@@ -65,6 +65,12 @@ sub addressDesc {
 	return $desc->{$address}{$field};
 }
 
+# Hard coded conversion of accounts to append "etc" to the account name if it is an account used for both ETH and ETC transactions
+sub uniquify {
+	my $account = shift;
+	return "${account}etc" if $account eq "0x93a44c99642a02fc4e62a97e13c703932682db36";
+	return $account;
+}
 
 sub readClassicTransactions { # take an address return a pointer to array of hashes containing the transactions found on that address
 	my ($transactions) = @_;
@@ -99,6 +105,9 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		}
 		$tran->{to} =~ s/\W//g; # remove any spaces or special characters that got pasted in
 		$tran->{from} =~ s/\W//g; # remove any spaces or special characters that got pasted in
+		# The following accounts were used in both ETC and ETH - we want accounts to be unique to the currency so for any dual use accounts we add etc to the end
+		$tran->{to} = uniquify($tran->{to});
+		$tran->{from} = uniquify($tran->{from});
 		my ($d,$m,$y,$tim) = split(/ /, $tran->{Timestamp} );
 		$y =~ s/,//;
 		my ($h, $min) = split(/:/, $tim);
@@ -109,7 +118,7 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		$tran->{dt} = $dt;
 		$tran->{toDesc} = addressDesc($tran->{to}) || "Unknown";
 		$tran->{fromDesc} = addressDesc($tran->{from}) || "Unknown";
-		$tran->{owner} = addressDesc($tran->{from},"Owner");
+		$tran->{owner} = $tran->{"Owner"};
 		$tran->{toS} = substr($tran->{to},0,6);
 		$tran->{fromS} = substr($tran->{from},0,6);
 		my ($val, $ccy) = split(/ /, $tran->{'Value'});
@@ -147,7 +156,7 @@ sub printTransactions {
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner\n";
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
@@ -160,7 +169,7 @@ sub printMySQLTransactions {
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
     	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
 	}
 }
 
