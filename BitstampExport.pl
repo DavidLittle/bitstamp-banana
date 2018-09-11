@@ -122,6 +122,7 @@ sub readBitstampTransactions {
 		    $rec->{fee} = $fee;
 		    $rec->{feeccy} = $feeccy;
 			$rec->{owner} = $opt{owner};
+			$rec->{hash} = "$opt{trans}-Line$.";
 		    if ($type eq "Deposit" || $type eq "Card Deposit") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
 		        $rec->{toaccount} = "Bitstamp $amountccy";
@@ -299,7 +300,7 @@ sub printTransactions {
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner\n";
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
@@ -312,7 +313,7 @@ sub printMySQLTransactions {
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
     	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner}\n";
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
 	}
 }
 
