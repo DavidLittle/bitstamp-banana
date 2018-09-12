@@ -90,9 +90,7 @@ sub renameExportFiles {
 }
 
 sub getJson {
-	my $address = shift;
-	my $action = 'txlist'; # txlist or txlistinternal
-#	my $action = txlistinternal;
+	my ($address, $action) = @_; # $action can be 'txlist' or 'txlistinternal' for transactions that invoke smart contracts
 	my $cachefile = "$opt{datadir}/$action$address.json"; # reads from cache file if one exists. Otherwise calls api and stores to cache file
 	my $result = [];
 	if (-e $cachefile) {
@@ -228,7 +226,9 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 	return $aoh if ($processed->{$address} or addressDesc($address,'Follow') eq 'N');;
 	$processed->{$address} = 1;
 
-	$aoh = getJson($address);
+	$aoh = getJson($address,'txlist');
+	my $aoh2 = getJson($address,'txlistinternal');
+	push @$aoh, @$aoh2;
 #	push @$transactions, @$aoh;
 	
 	foreach my $tran (@$aoh) {
