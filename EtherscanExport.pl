@@ -236,6 +236,9 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		$processed->{$tran->{hash}} = 1;
 		my ($to, $from) = ($tran->{to}, $tran->{from});
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
+		if ($tran->{isError}) {
+			$tran->{value} = 0; # e.g. if transaction is Out Of Gas. Keep the transaction because the fee is still charged.
+		}
 		$tran->{source} = 'Etherscan'; # to identify the source in Banana
 		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
 		$tran->{toDesc} = addressDesc($to) || "Unknown";
