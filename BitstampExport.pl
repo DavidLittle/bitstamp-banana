@@ -125,16 +125,34 @@ sub readBitstampTransactions {
 			$rec->{hash} = "$opt{trans}-Line$.";
 		    if ($type eq "Deposit" || $type eq "Card Deposit") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-		        $rec->{toaccount} = "Bitstamp $amountccy";
+		        $rec->{toaccount} = "Bitstamp $amountccy Trading";
+				$rec->{fromaccount} = "Bitstamp $amountccy Wallet";
+				$rec->{fromamount} = $amount;
+				$rec->{toamount} = $amount;
+
 		    } elsif ($type eq "Withdrawal") {
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-		        $rec->{toaccount} = "Bitstamp $amountccy Wallet";
+		        $rec->{fromaccount} = "Bitstamp $amountccy Trading";
+				$rec->{toaccount} = "Bitstamp $amountccy Wallet";
+				$rec->{fromamount} = $amount;
+				$rec->{toamount} = $amount;
+
 		    } elsif ($type eq "Market" and $subtype eq "Buy") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$valueccy"};
+				$rec->{toaccount} = "Bitstamp $amountccy Trading";
+				$rec->{fromaccount} = "Bitstamp USD Trading";
+				$rec->{fromamount} = $value;
+				$rec->{toamount} = $amount;
+
 		    } elsif ($type eq "Market" and $subtype eq "Sell") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$valueccy"};
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+				$rec->{fromaccount} = "Bitstamp $amountccy Trading";
+				$rec->{toaccount} = "Bitstamp USD Trading";
+				$rec->{toamount} = $value;
+				$rec->{fromamount} = $amount;
+
 		    }
 		    $rec->{USDvalue} = 0;
 			$rec->{USDvalue} = $amount if $rec->{amountccy} eq 'USD';
@@ -300,7 +318,7 @@ sub printTransactions {
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
+    print "TradeType,Subtype,DateTime,FromAccount,ToAccount,FromAmount,ToAmountqq,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
@@ -313,7 +331,7 @@ sub printMySQLTransactions {
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
     	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{fromaccount},$rec->{toaccount},$rec->{fromamount},$rec->{toamount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
 	}
 }
 
