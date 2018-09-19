@@ -34,7 +34,6 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
 $opt{desc} ||= "AddressDescriptions.dat";
 $opt{key} ||= 'TQPWAY66XX2SXFGPTT7677TENHFFQTMGNH'; # from etherscan.io
-$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{trans} ||= "EtherTransactions.dat";
 
 if ($opt{owner} eq 'David') {
@@ -156,7 +155,8 @@ sub addressDesc {
 #			}
 		}
 	}
-	return $desc->{$address}{$field};
+	return $desc->{$address}{$field} if $address;
+	return $desc;
 }
 
 sub convertFileToJson {
@@ -234,6 +234,9 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 	foreach my $tran (@$aoh) {
 		next if $processed->{$tran->{hash}} == 1;
 		$processed->{$tran->{hash}} = 1;
+		if ($tran->{hash} eq "0x8f336f7c919463c3aff7c32f4d5e55de5711be5cffedbd13b70a8c56eb6d6287") {
+			say "FUCK!!" ;
+		}
 		my ($to, $from) = ($tran->{to}, $tran->{from});
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
 		if ($tran->{isError}) {
@@ -268,7 +271,9 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		push @$transactions, $tran;
 
 #		readJson($from, $transactions) unless $processed->{$from};
-		readJson($to, $transactions) if addressDesc($to,'Owner') eq $opt{owner} and not $processed->{$to};
+		if ($opt{owner}) {
+			readJson($to, $transactions) if addressDesc($to,'Owner') eq $opt{owner} and not $processed->{$to};
+		}
 	}
 			
 	return;
@@ -335,12 +340,22 @@ sub saveTransactions {
 	store($trans, "$opt{datadir}/$opt{trans}");
 }
 
+sub getAllTransactions {
+	my ($addresses, $tj) = @_;
+	foreach my $ad (sort keys %$addresses) {
+		my $h = $addresses->{$ad};
+		if($h->{Follow} eq 'Y') {
+			if($h->{Address} =~ /^0x/) {
+				readJson($h->{Address}, $tj);
+			}
+		}
+	}
+}
 
 # Main Program
 printHelp if $opt{h};
-print "Start address $opt{start}\n";
-addressDesc($opt{start}); # initialise the addresses
-getJsonBalance('txnFee');
+my $addresses = addressDesc(); # initialise the addresses
+#getJsonBalance('txnFee');
 
 #say 'File transactions:';
 #my $tf = [];
@@ -352,9 +367,15 @@ getJsonBalance('txnFee');
 
 say 'Json transactions:';
 my $tj = [];
-readJson($opt{start}, $tj);
+if($opt{start}) {
+	print "Start address $opt{start}\n";
+	readJson($opt{start}, $tj);
+}
+else {
+	getAllTransactions($addresses, $tj);
+}
 printMySQLTransactions($tj);
-#saveTransactions($tj);
+saveTransactions($tj);
 #my $bj = calcBalances($tj);
 #print Dumper $bj;
 #printBalances($bj);

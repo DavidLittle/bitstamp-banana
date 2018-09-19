@@ -46,30 +46,30 @@ sub enrichShapeShiftTransactions {
 	
 	# create dictionary of transactions keyed on txhash
 	foreach my $a (@$all) {
-#		if ($a->{to} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found it 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
-		$hdict{$a->{hash}} = $a;
-		$adict{$a->{to}} = $a;
-		$adict{$a->{from}} = $a;
+		if ($a->{to} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found it 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
+		$hdict{lc($a->{hash})} = $a;
+		$adict{lc($a->{to})} = $a;
+		$adict{lc($a->{from})} = $a;
 	}
 #	print Dumper $adict{'0x85a9962fbc35549afec891c285b3fe057ec334cc'};
 	
 	# enrich shapeshit transactions from the dict
 	my %count;
 	foreach my $t (@$st) {
-#		if ($t->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found IT 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
+		if ($t->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc') { say "Found IT 0x85a9962fbc35549afec891c285b3fe057ec334cc"};
 		$count{all}++;
+		$count{"Status $t->{status}"}++; 
 		if ($t->{status} eq 'error') {
-			$count{error}++;
 			next;
 		}
+		$count{"OutgoingType $t->{outgoingType}"}++; 
+		$count{"IncomingType $t->{incomingType}"}++; 
 		if ($t->{outgoingType} eq 'BTC') {
-			$count{BTC}++;
-			next;
+#			next;
 		}
-		$count{most}++;
 		
-		my $h = $t->{transaction};
-		if ($h) {
+		my $h = lc($t->{transaction});
+		if ($h and $t->{outgoingType} =~ /ET[CH]/) {
 			$h = "0x$h";
 			$h =~ s/0x0x/0x/;
 		}
@@ -89,7 +89,7 @@ sub enrichShapeShiftTransactions {
 			push @$enriched, $t;
 			next;
 		}
-		$h = substr($h,0,10); # hashes from Gastracker.io (ETC) have truncated transaction hashes
+		$h = substr($h,0,9); # hashes from Gastracker.io (ETC) have truncated transaction hashes
 		if ($h and $hdict{$h}) {
 			$t->{T} = $hdict{$h}->{T};
 			$t->{timeStamp} = $hdict{$h}->{timeStamp};
@@ -101,12 +101,12 @@ sub enrichShapeShiftTransactions {
 			$t->{fromDesc} = $t->{incomingType};
 			$t->{Value} = $t->{incomingCoin};
 			$t->{ccy} = $t->{incomingType};
-			$t->{source} = 'ShapesHit';
+			$t->{source} = 'ShapesHIT';
 			$count{shorthash}++;
 			push @$enriched, $t;
 			next;
 		}
-		my $a = $t->{address}; #ss deposit address
+		my $a = lc($t->{address}); #ss deposit address
 		if ($a) {
 			$a = "0x$a";
 			$a =~ s/0x0x/0x/;
@@ -127,7 +127,7 @@ sub enrichShapeShiftTransactions {
 			push @$enriched, $t;
 			next;
 		}
-		my $w = $t->{withdraw}; #ss withdrawal address
+		my $w = lc($t->{withdraw}); #ss withdrawal address
 		if ($w) {
 			$w = "0x$w";
 			$w =~ s/0x0x/0x/;
@@ -150,14 +150,14 @@ sub enrichShapeShiftTransactions {
 		}
 		$count{none}++;	
 	}
+	print Dumper \%count;		
 	return $enriched;
-	#	print Dumper \%count;		
 }
 
 sub printTransactions {
 	my ($transactions,$sstransactions) = @_;
 	foreach my $t (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$transactions) {
-		print "$t->{source} $t->{T} $t->{fromS} $t->{fromDesc} $t->{'Value'} $t->{ccy} $t->{toS} $t->{toDesc}\n";
+		print "$t->{source} $t->{T} $t->{fromS} $t->{amount} $t->{fromDesc} $t->{'Value'} $t->{ccy} $t->{toS} $t->{toDesc}\n";
 	}
 }
 #Main Program
@@ -169,10 +169,10 @@ $et = retrieve("$opt{datadir}/$opt{ether}");
 $st = retrieve("$opt{datadir}/$opt{shapeshift}");
 
 my $all = [];
-push(@$all, @$ct, @$et);
+push(@$all, @$bt, @$ct, @$et);
 my $richer = enrichShapeShiftTransactions($st, $all);
 push(@$all, @$richer);
-printTransactions($all);
+printTransactions($richer);
 #foreach my $i (@$st) {
 #	print Dumper $i if $i->{address} eq '0x85a9962fbc35549afec891c285b3fe057ec334cc';
 #}

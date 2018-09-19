@@ -16,11 +16,11 @@ use Getopt::Long;
 # Process Blockchain.info API 
 
 # Commandline args
-GetOptions('d:s' => \$opt{datadir}, # Data Directory address
+GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, # 
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'o:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
 			'trans:s' => \$opt{trans}, # Blockchain transactions datafile
 			'sstrans:s' => \$opt{sstrans}, # Shapeshift transactions datafile
@@ -52,7 +52,11 @@ sub getTx {
 	my $request = new HTTP::Request("GET", $url);
 	my $response = $ua->request($request);
 	my $content = $response->content;
-
+	if ($content eq "Transaction not found") {
+		say "$content $tran";
+		$content = "";
+	}
+ 
 	if ($content) {
 		my $data = parse_json($content);
 		if ($data->{hash} eq "$tran") {
@@ -136,7 +140,7 @@ sub processShapeShiftTransactions {
 
 if ($opt{start}) {
 	my $d = getTx($opt{start});
-	printTx($d);
+	printTx($d) if $d;
 }
 else {
 	processShapeShiftTransactions();

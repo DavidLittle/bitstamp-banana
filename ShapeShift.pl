@@ -32,13 +32,13 @@ GetOptions( 'd:s' => \$opt{datadir}, # Data Directory address
 
 # Example data returned from txStat
 # Note - no timestamp is included, therefore use transaction hash as the lookup key
-#          'address'        => '0xfb27d2ddd73daae45d664271c2794e0c6bf09c90',
-#          'incomingCoin'   => '13.75',
 #          'incomingType'   => 'ETH',
+#          'incomingCoin'   => '13.75',
+#          'address'        => '0xfb27d2ddd73daae45d664271c2794e0c6bf09c90',
+#          'outgoingType'   => 'BTC',
+#          'outgoingCoin'   => '1.8826024',
 #          'transaction'    => 'cb250b00194b69515cce5dbf2aad520dd83e83a77fc03f1fdb397fef37681755',
 #          'transactionURL' => 'https://blockchain.info/tx/cb250b00194b69515cce5dbf2aad520dd83e83a77fc03f1fdb397fef37681755',
-#          'outgoingCoin'   => '1.8826024',
-#          'outgoingType'   => 'BTC',
 #          'withdraw'       => '1KvL2tDzZ5tqaiqyVmmJHPR2NSeQVefDox'
 #          'status'         => 'complete',
 
@@ -77,19 +77,33 @@ sub getTxStat {
 	return 0; # What should we return here??	
 }
 
+# addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
 sub addressDesc {
+	my ($address, $field) = @_;
+	$field ||= 'Desc'; #  default is to return the description for the given address
 	state $desc = undef; # Descriptions keyed on address
-#	$address = lc $address; # force lowercase for lookups
+	$address = lc $address; # force lowercase for lookups
 	if (not defined $desc) {
 		my $ad  = csv( in => "$opt{datadir}/$opt{desc}", headers => "auto", filter => {1 => sub {length > 1} } );
 		foreach my $rec (@$ad) {
-#			$rec->{Address} = lc $rec->{Address}; # force lowercase
-			my $address = $rec->{Address};
-			my $owner = $rec->{Owner};
+			$rec->{Address} = lc $rec->{Address}; # force lowercase
 			$desc->{$rec->{Address}} = $rec;
+#			$desc->{$rec->{Address}} = $rec->{Desc};
+#			if ($rec->{Follow} eq 'N') {
+#				$done->{$rec->{Address}} = 1 ; # pretend we've already done and therefore processed this address
+#			}
 		}
 	}
+	return $desc->{$address}{$field} if $address;
 	return $desc;
+}
+
+sub getTransactionDate {
+	my $data = shift;
+	if ($data->{incomingType} eq "ETH") {
+	
+	}
+	return DateTime->now;
 }
 
 sub getTransactionsFromAddressDesc {
@@ -97,9 +111,23 @@ sub getTransactionsFromAddressDesc {
 	my $transactions = [];
 	my $processed;
 	foreach my $address (sort keys %$d) {
-		if ($d->{$address}{Owner} eq 'ShapeShift') {
+		if ($d->{$address}{Owner} =~ /ShapeShift/) {
 			my $data = getTxStat($address);
-			push(@$transactions, $data);
+			$data->{type} = "Transfer";
+			$data->{subtype} = "ShapeShift";
+			$data->{account} = $data->{address}; # This is the Shapeshift deposit address - incoming to ShapeShift
+			$data->{toaccount} = $data->{withdraw}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
+			$data->{amount} = $data->{incomingCoin}; # This is the Shapeshift deposit amount
+			$data->{amountccy} = $data->{incomingType}; # This is the Shapeshift deposit coin type
+			$data->{valueX} = $data->{outgoingCoin}; # This is the Shapeshift withdraw amount
+			$data->{valueccy} = $data->{outgoingType}; # This is the Shapeshift withdraw coin type
+			$data->{rate} = 'NULL';
+			$data->{rateccy} = 'NULL';
+			$data->{fee} = 'NULL';
+			$data->{feeccy} = 'NULL';
+			$data->{owner} = addressDesc($data->{toaccount}, 'Owner');
+			$data->{hash} = "$data->{transaction}-SS"; # This is the transaction hash for the outgoing transaction SS to identify it as ShapeShift and keep hashes unique
+			$data->{dt} = getTransactionDate($data);
 #			if ($data->{transaction}) {
 #				$transactions->{$data->{transaction}} = $data;
 #				$processed->{$data->{transaction}} = 1;
@@ -113,16 +141,18 @@ sub getTransactionsFromAddressDesc {
 #				$processed->{$data->{withdraw}} = 1;
 #			}
 			if ($data->{status} eq 'error') {
-				say "$address,ShapeShift,ShapeShift error,N";
+#				say "$address,ShapeShift,ShapeShift error,N";
 			}
 			elsif ($data->{status} eq 'complete') {
-				say "$address,ShapeShift,ShapeShift $data->{incomingCoin} $data->{incomingType} to $data->{outgoingCoin} $data->{outgoingType} $data->{transaction}";
+#				say "$address,ShapeShift,ShapeShift $data->{incomingCoin} $data->{incomingType} to $data->{outgoingCoin} $data->{outgoingType} $data->{transaction}";
+				push(@$transactions, $data);
 			}
 			elsif ($data->{status} eq 'failed') {
-				say "$address,ShapeShift,ShapeShift ETH deposit failed,N";
+#				say "$address,ShapeShift,ShapeShift ETH deposit failed,N";
 			}
 			else {
-				say "$address,ShapeShift,ShapeShift $data->{incomingCoin} $data->{incomingType} to $data->{outgoingCoin} $data->{outgoingType} resolved,N";
+				say "$address,ShapeShift,ShapeShift $data->{incomingCoin} $data->{incomingType} to $data->{outgoingCoin} $data->{outgoingType} $data->{status} resolved,N";
+				push(@$transactions, $data);
 			}
 		}
 	}
@@ -144,6 +174,26 @@ sub printOutputData {
 	}
 }
 
+sub printMySQLTransactions {
+	my $trans = shift;
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
+    for my $rec (@$trans) {
+    	my $dt = $rec->{dt};
+    	my $datetime = $dt->datetime(" ");
+    	$rec->{subtype} ||= 'NULL';
+    	$rec->{toaccount} ||= 'NULL';
+    	$rec->{valueX} ||= 'NULL';
+    	$rec->{valueccy} ||= 'NULL';
+    	$rec->{rate} ||= 'NULL';
+    	$rec->{rateccy} ||= 'NULL';
+    	$rec->{fee} ||= 'NULL';
+    	$rec->{feeccy} ||= 'NULL';
+    	$rec->{owner} ||= 'NULL';
+       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+	}
+}
+
+
 # Main Program
 
 my $d = addressDesc();
@@ -154,14 +204,15 @@ if ($opt{start}) { # for interactive use to check a single address
 }
 
 my $t = getTransactionsFromAddressDesc($d);
-printOutputData($t,'BTC');
-printOutputData($t,'ETH');
-printOutputData($t,'DASH');
+printMySQLTransactions($t);
+#printOutputData($t,'BTC');
+#printOutputData($t,'ETH');
+#printOutputData($t,'DASH');
 #	if ($i->{address} eq '0x056a157691922ec30ee833c51446515e0960e167') {
 #		say "Found it 0x056a157691922ec30ee833c51446515e0960e167";
 #	}
 #}
 saveTransactions($t);
 
-
+exit(0);
 
