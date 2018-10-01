@@ -22,6 +22,7 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
+			'trace:s' => \$opt{trace}, # trace hash or address
 			'trans:s' => \$opt{trans}, # Blockchain transactions datafile
 			'ss' => \$opt{ss}, # Process all ShapeShift transactions to harvest relevant BTC addresses
 			'sstrans:s' => \$opt{sstrans}, # Shapeshift transactions datafile
@@ -108,11 +109,12 @@ sub getAddr {
 	my $request = new HTTP::Request("GET", $url);
 	my $response = $ua->request($request);
 	my $content = $response->content;
-	if ($content eq "Address not found" or $content =~ /^Illegal character/) {
+	if ($content eq "Address not found" or $content =~ /^Illegal character/ or $content =~ /^Can't connect/) {
 		say "$content address:$address";
 		$content = "";
 	}
- 
+
+	#say $content; 
 	if ($content) {
 		my $data = parse_json($content);
 		if ($data->{address} eq "$address") {
@@ -229,6 +231,9 @@ sub doSOmethingUseful {
 	my $hashes = shift;
 	my $transactions = [];
 	foreach my $hash (@$hashes) {
+		if ($opt{trace} and $opt{trace} eq $hash) {
+			say "Tracing hash $hash";
+		}
 		my $data = getTx($hash);
 		next unless $data;
 		my $ins = $data->{inputs};
@@ -253,7 +258,7 @@ sub doSOmethingUseful {
 			$SSoutput = addressDesc($addr,'ShapeShift') eq 'Output';
 			$data->{outvalue} += $out->{value};
 			my $owner = addressDesc($addr,'Owner');
-			$out->{outowner} = $owner; 
+			$out->{owner} = $owner; 
 			$data->{outownercount}{$owner}++;
 			my $follow = addressDesc($addr,'Follow');
 			$out->{outfollow} = $follow;
@@ -263,16 +268,28 @@ sub doSOmethingUseful {
 			$data->{outshapeshiftcount}{$ss}++;
 			$data->{outcount}++;
 		}
-		if ($data->{outcount} == 1 and $data->{inshapeshiftcount}{'Output'} == $data->{incount}) {
-			# This is a ShapeShift Output transaction. There could be many inputs and they are all internal ShapeShift=Output Addresses with Follow=
-			# There will only be one output which is the Address that ShapeShift has sent the funds to - it should be owned by one of us with Follow=Y
+		if ($data->{outfollowcount}{'Y'} == 1 and $data->{inownercount}{''} == $data->{incount}) {
+			# This is a ShapeShift Output transaction. There could be many inputs and they are all ShapeShift internal addresses (unknown to addressDesc)
+			# There will be one or two outputs. One is the Address that ShapeShift has sent the funds to - it should be owned by one of us with Follow=Y
+			# The second output address is optional change address and would not be known to us
+			# There may be trades other than ShapeShift that fit the same criteria, so we don't check that every input is ShapeShift=Output address.
 			# Create a transaction with a dummy input and full amount of transaction to the output address.
-			my $addr = $outs->[0]{addr}; # There is only one output address
+			# Find the output address with Follow=Y
+			my $out; # There is only one output address - let's find it
+			foreach my $o (@$outs) {
+				if ($o->{outfollow} eq 'Y') {
+					$out = $o;
+					last;
+				}
+			}
+			my $account = "Unknown addresses";
+			$account = "ShapeShiftInternalAddresses" if $out->{ShapeShift} eq 'Output'; # output ShapeShift withdrawal address, therefore input is SS internal
+			
 			$data->{type} = "Transfer";
 			$data->{subtype} = "Bitcoin";
-			$data->{account} = "ShapeShiftInternalAddresses"; # This is the Shapeshift deposit address - incoming to ShapeShift
-			$data->{toaccount} = $addr; # This is the Shapeshift withdraw address - outgoing from ShapeShift
-			$data->{amount} = $data->{outvalue} / 1e8; # This is the amout of BTC credited from the ShapeShift transaction
+			$data->{account} = $account; 
+			$data->{toaccount} = $out->{addr}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
+			$data->{amount} = $out->{value} / 1e8; # This is the amout of BTC credited from the ShapeShift transaction
 			$data->{amountccy} = 'BTC'; 
 			$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
 			$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
@@ -280,16 +297,54 @@ sub doSOmethingUseful {
 			$data->{rateccy} = 'NULL';
 			$data->{fee} = 'NULL'; # We are not interested in the Bitcoin mining fee, our fee is the spread from ShapeShift
 			$data->{feeccy} = 'NULL';
-			$data->{owner} = addressDesc($addr, 'Owner');
+			$data->{owner} = $out->{owner};
 			$data->{hash} = $data->{hash}; # This is the transaction hash for the overall transaction. Populated by blockchain.info
 			$data->{dt} = DateTime->from_epoch(epoch => $data->{time});
 			push @$transactions, $data;
 		}
-		elsif ($data->{index} == 1 and $SSinput) {
-			say "ShapeShift Input trade";
-			next;
+		elsif ($data->{infollowcount}{'Y'} == $data->{incount}) {
+			# All the inputs are Follow addresses. e.g. this may be a withdrawal from multiple Jaxx addresses to a cold storage or Bitstamp address
+			# We need to create one transaction for each of the inputs
+			# There should be just one output account that is relevant for us (known address). It may or may not be a Follow account
+			# Owner should be the input owner since that is the sender - they own the transaction as they initiated it
+#			say "Wallet trade";
+			my $out; # There is only one output address - let's find it
+			foreach my $o (@$outs) {
+				if (defined $o->{owner}) {
+					$out = $o;
+					last;
+				}
+			}
+			my $index = 0;
+			foreach my $in (@$ins) {
+				my $account = $in->{prev_out}{addr};
+				my $sub = dclone($data);
+				
+				$data->{type} = "Transfer";
+				$data->{subtype} = "Bitcoin";
+				$data->{account} = $account; 
+				$data->{toaccount} = $out->{addr}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
+				$data->{amount} = $in->{prev_out}{value} / 1e8; # This is the amout of BTC credited from the ShapeShift transaction
+				$data->{amountccy} = 'BTC'; 
+				$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
+				$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
+				$data->{rate} = 'NULL';
+				$data->{rateccy} = 'NULL';
+				$data->{fee} = 'NULL'; # We are not interested in the Bitcoin mining fee, our fee is the spread from ShapeShift
+				$data->{feeccy} = 'NULL';
+				$data->{owner} = $in->{owner};
+				$data->{hash} = "$hash-$index"; # This is the transaction hash for the overall transaction. Populated by blockchain.info
+				$data->{dt} = DateTime->from_epoch(epoch => $data->{time});
+
+				my $sub = dclone($data);
+				push @$transactions, $sub;
+				$index++;
+
+			}
+			
 		}
 		else {
+			say "Not sure what to do with transaction $hash";
 			next;
 		}
 
