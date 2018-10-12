@@ -23,16 +23,18 @@ use Getopt::Long;
 
 # Commandline args
 GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
+			'desc:s' => \$opt{desc}, # 
 			'g:s' => \$opt{g}, # 
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
+			'trace:s' => \$opt{trace}, # starting address
 			'trans:s' => \$opt{trans}, # starting address
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "AddressDescriptions.dat";
+$opt{desc} ||= "ACK.csv"; #"AddressDescriptions.dat";
 $opt{key} ||= 'TQPWAY66XX2SXFGPTT7677TENHFFQTMGNH'; # from etherscan.io
 $opt{trans} ||= "EtherTransactions.dat";
 
@@ -106,9 +108,9 @@ sub getJson {
 		my $data = parse_json($content);
 		if ($data->{message} eq "OK" and $data->{status} == 1) {
 			$result = $data->{result};
-			store($result, $cachefile);
 		}
 	}	
+	store($result, $cachefile);
 	return $result;
 }
 
@@ -132,9 +134,9 @@ sub getJsonBalance {
 		my $data = parse_json($content);
 		if ($data->{message} eq "OK" and $data->{status} == 1) {
 			$result = $data->{result};
-			store(\$result, $cachefile);
 		}
 	}	
+	store(\$result, $cachefile);
 	return $result;
 }
 
@@ -149,10 +151,6 @@ sub addressDesc {
 		foreach my $rec (@$ad) {
 			$rec->{Address} = lc $rec->{Address}; # force lowercase
 			$desc->{$rec->{Address}} = $rec;
-#			$desc->{$rec->{Address}} = $rec->{Desc};
-#			if ($rec->{Follow} eq 'N') {
-#				$done->{$rec->{Address}} = 1 ; # pretend we've already done and therefore processed this address
-#			}
 		}
 	}
 	return $desc->{$address}{$field} if $address;
@@ -234,8 +232,8 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 	foreach my $tran (@$aoh) {
 		next if $processed->{$tran->{hash}} == 1;
 		$processed->{$tran->{hash}} = 1;
-		if ($tran->{hash} eq "0x8f336f7c919463c3aff7c32f4d5e55de5711be5cffedbd13b70a8c56eb6d6287") {
-			say "FUCK!!" ;
+		if ($opt{trace} and $tran->{hash} =~ /$opt{trace}/) {
+			say "Found! $tran->{hash}" ;
 		}
 		my ($to, $from) = ($tran->{to}, $tran->{from});
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
@@ -319,7 +317,7 @@ sub printTransactions {
 sub printMySQLTransactions {
 	my $trans = shift;
     print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (@$trans) {
+    for my $rec (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
@@ -365,7 +363,7 @@ my $addresses = addressDesc(); # initialise the addresses
 #print Dumper $bf;
 #printBalances($bf);
 
-say 'Json transactions:';
+#say 'Json transactions:';
 my $tj = [];
 if($opt{start}) {
 	print "Start address $opt{start}\n";

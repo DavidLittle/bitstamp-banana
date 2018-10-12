@@ -23,6 +23,7 @@ use Getopt::Long;
 
 # Commandline args
 GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
+			'desc:s' => \$opt{desc}, # 
 			'g:s' => \$opt{g}, # 
 			'help' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
@@ -157,7 +158,7 @@ sub printTransactions {
 sub printMySQLTransactions {
 	my $trans = shift;
     print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (@$trans) {
+    for my $rec (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
@@ -211,6 +212,6 @@ readClassicTransactions($transactions);
 printMySQLTransactions($transactions);
 my $b = calcBalances($transactions);
 #printBalances($b);
-#saveTransactions($transactions);
+saveTransactions($transactions);
 
 

@@ -22,7 +22,9 @@ use Data::Dumper;
 # Nevertheless, when it works it is evidence that the address really is a SHapeShift deposit address ie an address for which SHapeShift has the private key.
 
 # Commandline args
-GetOptions( 'datadir:s' => \$opt{datadir}, # Data Directory address
+GetOptions( 
+			'accounts!' => \$opt{accounts}, # Get SS transactions by looking at every entry in the Accounts (AddressDesc) file
+			'datadir:s' => \$opt{datadir}, # Data Directory address
 			'desc:s' => \$opt{desc},
 			'enrichedAddress!' => \$opt{enrichedAddress},
 			'g:s' => \$opt{g}, # 
@@ -31,7 +33,7 @@ GetOptions( 'datadir:s' => \$opt{datadir}, # Data Directory address
 			'owner:s' => \$opt{owner}, # 
 			'start:s' => \$opt{start}, # starting address
 			'trans:s' => \$opt{trans}, # filename to store transactions
-			'track:s' => \$opt{track}, # track a given address or ShapeShift status (prints Data::Dumper)
+			'trace:s' => \$opt{trace}, # trace a given address or ShapeShift status (prints Data::Dumper)
 );
 
 # Example data returned from txStat
@@ -48,10 +50,15 @@ GetOptions( 'datadir:s' => \$opt{datadir}, # Data Directory address
 
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "AddressDescriptions.dat";
+$opt{desc} ||= "ACK.csv"; # "AddressDescriptions.dat";
 $opt{key} ||= ''; # from shapeshift.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{trans} ||= "ShapeshiftTransactions.dat";
+
+$opt{bitstamp} ||= "BitstampTransactions.dat";
+$opt{classic} ||= "ClassicTransactions.dat";
+$opt{ether} ||= "EtherTransactions.dat";
+
 
 # Global variables
 my $baseurl = "https://shapeshift.io/";
@@ -64,6 +71,7 @@ sub getTxStat {
 	my $result = [];
 	if (-e $cachefile) {
 		$result = retrieve($cachefile);
+		
 		return $result;
 	}
 	my $url = "$baseurl$action/$address";
@@ -75,6 +83,7 @@ sub getTxStat {
 	my $content = $response->content;
 	if ($content) {
 		my $data = parse_json($content);
+		$data->{transaction} = '0xbd98b2d4ee9ddd6b235781b2220fa782ca76b8baa3f6963ded05b4fc3c9e9630' if $data->{transaction} eq '0x01973de82f9da359738d364a64de7aa9a5022c9bc314fbaefce42374ea61d1a0';
 		store($data, $cachefile);
 		return $data;
 	}
@@ -92,8 +101,8 @@ sub addressDesc {
 		foreach my $rec (@$ad) {
 			$rec->{Address} = lc $rec->{Address} if $rec->{Address} =~ /^0x/; # force lowercase for ethereum addresses
 			$desc->{$rec->{Address}} = $rec;
-			if ($opt{track} and $opt{track} eq $rec->{Address}) {
-				say "Tracking address $opt{track}";
+			if ($opt{trace} and $opt{trace} eq $rec->{Address}) {
+				say "traceing address $opt{trace}";
 				print Dumper $rec;
 			}
 		}
@@ -108,6 +117,32 @@ sub getTransactionDate {
 	
 	}
 	return DateTime->now;
+}
+
+sub getAddressesFromFiles {
+	my $desc = shift;
+	my $addresses;
+	my $action = 'txStat';
+	my @files = glob "$opt{datadir}/ShapeShift$action*.json";
+	my %count;
+	for my $f (@files) {
+		$count{total}++;
+		my $t = retrieve($f);
+		next unless $t;
+		$count{"Status $t->{status}"}++; 
+		if ($t->{status} eq 'error') {
+			next;
+		}
+		$count{"$t->{incomingType} to $t->{outgoingType}"}++;
+		my $address = $t->{address};
+		if ($address eq $opt{trace}) {
+			say "Found in getAddressesFromFiles $address";
+			say Dumper $t;
+		}
+		$addresses->{$address} = $t;
+	}
+	say Dumper \%count;
+	return $addresses;
 }
 
 sub getTransactionsFromAddressDesc {
@@ -131,12 +166,16 @@ sub getTransactionsFromAddressDesc {
 			$data->{feeccy} = 'NULL';
 			$data->{owner} = addressDesc($data->{toaccount}, 'Owner');
 			$data->{hash} = "$data->{transaction}-SS"; # This is the transaction hash for the outgoing transaction SS to identify it as ShapeShift and keep hashes unique
-			if ($opt{track} and $opt{track} eq $data->{toaccount}) {
-				say "Tracking address $opt{track}";
+			if ($opt{trace} and $opt{trace} eq $data->{address}) {
+				say "traceing address $opt{trace}";
 				print Dumper $data;
 			}
-			if ($opt{track} and $opt{track} eq $data->{status}) {
-				say "Tracking status $opt{track}";
+			if ($opt{trace} and $opt{trace} eq $data->{withdraw}) {
+				say "traceing withdraw address $opt{trace}";
+				print Dumper $data;
+			}
+			if ($opt{trace} and $opt{trace} eq $data->{status}) {
+				say "traceing status $opt{trace}";
 				print Dumper $data;
 			}
 			$data->{dt} = getTransactionDate($data);
@@ -271,15 +310,26 @@ if ($opt{start}) { # for interactive use to check a single address
 	say Dumper $x;
 	exit 0;
 }
-if ($opt{enrichedAddress}) { # Tidy up addressDesc file with data from ShapeShift
+elsif ($opt{enrichedAddress}) { # Tidy up addressDesc file with data from ShapeShift
 	my $t = getTransactionsFromAddressDesc($d);
 	printEnrichedAddressDesc($t,$d); # Adds ShapeShift Data to the AddressDescription file
 	exit 0;
 }
-
-
-my $t = getTransactionsFromAddressDesc($d);
-printMySQLTransactions($t);
+elsif ($opt{accounts}) { # Get the ShapeShift transactions from the accounts (AddressDesc) file
+	my $t = getTransactionsFromAddressDesc($d);
+	printMySQLTransactions($t);
+	saveTransactions($t);
+	say "Now run All.pl to enrich the ShapeShift with Dates and do the address switch";
+	exit 0;
+}
+else {
+	my $d2 = getAddressesFromFiles($d);
+	my $t = getTransactionsFromAddressDesc($d2);
+	printMySQLTransactions($t);
+	saveTransactions($t);
+	say "Now run All.pl to enrich the ShapeShift with Dates and do the address switch";
+	exit 0;
+}
 #printOutputData($t,'BTC');
 #printOutputData($t,'ETH');
 #printOutputData($t,'DASH');
@@ -287,7 +337,5 @@ printMySQLTransactions($t);
 #		say "Found it 0x056a157691922ec30ee833c51446515e0960e167";
 #	}
 #}
-saveTransactions($t);
 
-exit(0);
 

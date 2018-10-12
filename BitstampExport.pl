@@ -1,3 +1,4 @@
+use feature qw(state say);
 use English;
 use strict;
 use DateTime;
@@ -31,7 +32,8 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "AddressDescriptions.dat";
+$opt{desc} ||= "ACK.csv"; #"AddressDescriptions.dat";
+$opt{hist} = "";
 $opt{key} ||= ''; # from etherscan.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{start} ||= "";
@@ -39,8 +41,10 @@ $opt{start} ||= "";
 $opt{cablefile} ||= "Cable.dat";
 if ($opt{owner} eq 'David') {
 	$opt{trans} ||= "DavidsBitstampTransactions.csv";
+	$opt{hist} ||= "bitstamp_account_81162_history.txt";
 } elsif ($opt{owner} eq 'Richard') {
 	$opt{trans} ||= "RichardsBitstampTransactions.csv";
+	$opt{hist} ||= "bitstamp_account_512288_history.txt";
 } elsif ($opt{owner} eq 'Kevin') {
 	$opt{trans} ||= "KevinsBitstampTransactions.csv";
 }
@@ -52,6 +56,7 @@ my $data3; # fee records appended
 
 my $owner = $opt{owner}; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 my $cable = {}; # hash keyed on date containing daily USD/GBP exchange rates
+my $withdrawal = {}; # hash keyed on datetime containing withdrawal addresses
 my %BananaMapping = (
     "David,Main Account,BTC" => 10100,
     "David,Main Account,ETH" => 10101,
@@ -61,6 +66,26 @@ my %BananaMapping = (
     "David,BitstampFee,BTC"  => 6071,
     "David,BitstampFee,ETH"  => 6072,
 );
+
+sub getWithdrawalsFromHistory {
+	my $hist = undef;
+	open($hist, "$opt{datadir}/$opt{hist}") || die "Can't open $opt{hist} for reading: $!";
+	while(<$hist>) {
+		s/\r//; #Remove carriage return
+		chomp;
+		next if $_ !~ /withdrawal request for /; #skip non-withdrawal
+		next if $_ =~ /international wire transfer withdrawal request for /; # Skip the Fiat withdrawals
+		next if $_ =~ /SEPA transfer withdrawal request for /; # Skip the Fiat withdrawals
+#		say $_;
+		my($year, $month, $day, $hour, $min, $sec, $amount, $type, $address) = m/(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d).*withdrawal request for ([\d\.]+) (\w+) to (.*)/;
+		my $dt = DateTime->new(year => $year, month => $month, day => $day, hour => $hour, minute => $min, second => $sec, time_zone => "UTC");
+		my $ts = $dt->epoch();
+#		say "$ts $amount $type $address";
+		$withdrawal->{$ts} = {amount => $amount, type => $type, address => $address};
+#		say "--"
+	}
+}
+
 
 # Read in FX rates
 sub readFXrates {
@@ -132,8 +157,19 @@ sub readBitstampTransactions {
 
 		    } elsif ($type eq "Withdrawal") {
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+		        my $ts = $rec->{dt}->epoch();
+		        my $offset = 0;
+		        while (!defined $withdrawal->{$ts-$offset} and !defined $withdrawal->{$ts+$offset} and $offset < 60*60*5) {
+		        	$offset++;
+		        }
+		        my $wd = $withdrawal->{$ts-$offset} || $withdrawal->{$ts-$offset};
+		        if (!defined $wd) {
+			        say "Failed to find withdrawal address: $_" if $amountccy =~ /[BE]TC/;
+			    }
+			    my $toaccount = $wd->{address} || "Bitstamp $amountccy Wallet";
 		        $rec->{fromaccount} = "Bitstamp $amountccy Trading";
 				$rec->{toaccount} = "Bitstamp $amountccy Wallet";
+				$rec->{hash} .=	"-$toaccount";
 				$rec->{fromamount} = $amount;
 				$rec->{toamount} = $amount;
 
@@ -318,7 +354,7 @@ sub printTransactions {
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,FromAccount,ToAccount,FromAmount,ToAmountqq,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
+    print "TradeType,Subtype,DateTime,FromAccount,ToAccount,FromAmount,ToAmount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
     for my $rec (@$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
@@ -337,6 +373,7 @@ sub printMySQLTransactions {
 
 # Main program
 readFXrates();
+getWithdrawalsFromHistory();
 if (0) { # Processing for banana input
 	my $d = readBitstampTransactions();
 	my $a = accumulateMktOrders($d);
