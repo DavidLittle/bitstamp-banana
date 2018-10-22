@@ -12,6 +12,8 @@ use LWP::Simple;
 use vars qw(%opt);
 use Getopt::Long;
 use Data::Dumper;
+use lib '.';
+use AccountsList;
 
 
 # Process a shapeshift.io address to confirm exchanges transactions
@@ -26,7 +28,6 @@ GetOptions(
 			'accounts!' => \$opt{accounts}, # Get SS transactions by looking at every entry in the Accounts (AddressDesc) file
 			'datadir:s' => \$opt{datadir}, # Data Directory address
 			'desc:s' => \$opt{desc},
-			'enrichedAddress!' => \$opt{enrichedAddress},
 			'g:s' => \$opt{g}, # 
 			'help' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
@@ -90,6 +91,7 @@ sub getTxStat {
 	return 0; # What should we return here??	
 }
 
+=item
 # addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
 sub addressDesc {
 	my ($address, $field) = @_;
@@ -110,6 +112,7 @@ sub addressDesc {
 	return $desc->{$address}{$field} if $address;
 	return $desc;
 }
+=cut
 
 sub getTransactionDate {
 	my $data = shift;
@@ -145,12 +148,12 @@ sub getAddressesFromFiles {
 	return $addresses;
 }
 
-sub getTransactionsFromAddressDesc {
-	my $d = shift;
+sub getTransactionsFromAccountsList {
+	my $accounts = AccountsList->addresses();
 	my $transactions = [];
 	my $processed;
-	foreach my $address (sort keys %$d) {
-		if (length($address) > 20 or $d->{$address}{Owner} =~ /ShapeShift/) {
+	foreach my $address (sort keys %$accounts) {
+		if (length($address) > 20 or $accounts->{$address}{Owner} =~ /ShapeShift/) {
 			my $data = getTxStat($address);
 			$data->{type} = "Exchange";
 			$data->{subtype} = "ShapeShift";
@@ -164,7 +167,7 @@ sub getTransactionsFromAddressDesc {
 			$data->{rateccy} = 'NULL';
 			$data->{fee} = 'NULL';
 			$data->{feeccy} = 'NULL';
-			$data->{owner} = addressDesc($data->{toaccount}, 'Owner');
+			$data->{owner} = AccountsList->address($data->{toaccount}, 'Owner');
 			$data->{hash} = "$data->{transaction}-SS"; # This is the transaction hash for the outgoing transaction SS to identify it as ShapeShift and keep hashes unique
 			if ($opt{trace} and $opt{trace} eq $data->{address}) {
 				say "traceing address $opt{trace}";
@@ -247,84 +250,28 @@ sub printMySQLTransactions {
 	}
 }
 
-sub printEnrichedAddressDesc {
-	my ($trans, $desc) = @_;
-    print "Address,Owner,Desc,AccountName,Follow,Currency,AccountType,ShapeShift\n";
-    for my $rec (@$trans) {
-    	my $from = $rec->{account};
-    	my $to = $rec->{toaccount};
-    	my $ssfrom = $desc->{$from}{ShapeShift};
-    	my $ssto = $desc->{$to}{ShapeShift};
-    	if (! exists $desc->{$from}) {
-    		say "Unexpected desc->from doesn't exist: $from";
-    		next;
-    	}
-    	if (! exists $desc->{$to}) {
-    		say "Unexpected desc->to doesn't exist: $to";
-    		next;
-    	}
-    	$desc->{$from}{ShapeShift} = "Input";
-    	$desc->{$from}{incomingType} = $rec->{incomingType};
-    	$desc->{$to}{ShapeShift} = "Output";
-    	$desc->{$to}{outgoingType} = $rec->{outgoingType};
-    	if($ssfrom and $ssfrom ne $desc->{$from}{ShapeShift}) {
-    		say "Unexpected ssfrom: $ssfrom desc->{from}{ShapeShift} $desc->{$from}{ShapeShift} $from";
-    	}
-    	if($ssto and $ssto ne $desc->{$to}{ShapeShift}) {
-    		say "Unexpected ssto: $ssto desc->{to}{ShapeShift} $desc->{$to}{ShapeShift} $to";
-    	}
-    }
-    for my $addr (sort keys %$desc) {
-    	my $h = $desc->{$addr};
-    	if($h->{ShapeShift} eq 'Output') {
-    		$h->{Owner} ||= 'ShapeShift';
-    		$h->{Desc} ||= 'ShapeShift transfer';
-    		$h->{AccountName} ||= substr($addr,0,8);
-    		$h->{Follow} ||= 'Y';
-    		$h->{Follow} = 'Y' if $h->{Follow} eq 'NULL';
-    		$h->{Currency} ||= $h->{outgoingType};
-    		$h->{AccountType} ||= 'Wallet';
-    	}
-    	if($h->{ShapeShift} eq 'Input') {
-    		$h->{Owner} ||= 'ShapeShift';
-    		$h->{Desc} ||= 'ShapeShift deposit';
-    		$h->{Desc} = 'ShapeShift deposit' if lc $h->{Desc} eq 'shapeshift transfer';
-    		$h->{Desc} = 'ShapeShift deposit' if lc $h->{Desc} eq 'shapeshift deposit';
-    		$h->{AccountName} ||= substr($addr,0,8);
-    		$h->{Follow} = 'N';
-    		$h->{Currency} ||= $h->{incomingType};
-    		$h->{AccountType} ||= 'Wallet';
-    	}
-    	if (exists $h->{outgoingType} and $h->{Currency} ne $h->{outgoingType}) {
-    		say "Unexpected desc currency on $addr $h->{Currency} vs. SS outgoingType $h->{outgoingType}";
-    	}
-       	print "$addr,$h->{Owner},$h->{Desc},$h->{AccountName},$h->{Follow},$h->{Currency},$h->{AccountType},$h->{ShapeShift}\n";
-	}
-}
 
 # Main Program
 
-my $d = addressDesc();
+#my $d = addressDesc();
+AccountsList->new();
+AccountsList->backCompatible();
+
 if ($opt{start}) { # for interactive use to check a single address
 	my $x = getTxStat($opt{start});
 	say Dumper $x;
 	exit 0;
 }
-elsif ($opt{enrichedAddress}) { # Tidy up addressDesc file with data from ShapeShift
-	my $t = getTransactionsFromAddressDesc($d);
-	printEnrichedAddressDesc($t,$d); # Adds ShapeShift Data to the AddressDescription file
-	exit 0;
-}
-elsif ($opt{accounts}) { # Get the ShapeShift transactions from the accounts (AddressDesc) file
-	my $t = getTransactionsFromAddressDesc($d);
+elsif ($opt{accounts}) { # Get the ShapeShift transactions from the accounts file
+	my $t = getTransactionsFromAccountsList();
 	printMySQLTransactions($t);
 	saveTransactions($t);
 	say "Now run All.pl to enrich the ShapeShift with Dates and do the address switch";
 	exit 0;
 }
 else {
-	my $d2 = getAddressesFromFiles($d);
-	my $t = getTransactionsFromAddressDesc($d2);
+	my $d2 = getAddressesFromFiles();
+	my $t = getTransactionsFromAccountsList($d2);
 	printMySQLTransactions($t);
 	saveTransactions($t);
 	say "Now run All.pl to enrich the ShapeShift with Dates and do the address switch";
