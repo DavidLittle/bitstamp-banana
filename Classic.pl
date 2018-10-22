@@ -11,6 +11,8 @@ use JSON::Parse qw(parse_json json_file_to_perl);
 use LWP::Simple;
 use vars qw(%opt);
 use Getopt::Long;
+use lib '.';
+use AccountsList;
 
 
 # Ethereum Classic account tracker
@@ -46,6 +48,7 @@ $opt{owner} ||= "David"; # Owner of the ETC accounts. Could be Richard, David, K
 # Global variables
 my %M = ('Jan'=>1,'Feb'=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,"Jul"=>7,"Aug"=>8,"Sep"=>9,"Oct"=>10,"Nov"=>11,"Dec"=>12);
 
+=item
 # addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
 sub addressDesc {
 	my ($address, $field) = @_;
@@ -65,6 +68,7 @@ sub addressDesc {
 	}
 	return $desc->{$address}{$field};
 }
+=cut
 
 # Hard coded conversion of accounts to append "etc" to the account name if it is an account used for both ETH and ETC transactions
 sub uniquify {
@@ -117,8 +121,8 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
 		$tran->{timeStamp} = $dt->epoch();
 		$tran->{dt} = $dt;
-		$tran->{toDesc} = addressDesc($tran->{to}) || "Unknown";
-		$tran->{fromDesc} = addressDesc($tran->{from}) || "Unknown";
+		$tran->{toDesc} = AccountsList->address($tran->{to}) || "Unknown";
+		$tran->{fromDesc} = AccountsList->address($tran->{from}) || "Unknown";
 		$tran->{owner} = $tran->{"Owner"};
 		$tran->{toS} = substr($tran->{to},0,6);
 		$tran->{fromS} = substr($tran->{from},0,6);
@@ -193,9 +197,9 @@ sub calcBalances {
 sub printBalances {
 	my $balances = shift;
 	foreach my $address (sort keys %$balances) {
-		next if addressDesc($address,'Follow') eq 'N';
+		next if AccountsList->address($address,'Follow') eq 'N';
 		my $bal1 = $balances->{$address};
-		say "$address $bal1 " . addressDesc($address);
+		say "$address $bal1 " . AccountsList->address($address);
 	}
 }
 
@@ -204,7 +208,10 @@ sub saveTransactions {
 	store($trans, "$opt{datadir}/$opt{trans}");
 }
 
-addressDesc();
+#addressDesc();
+AccountsList->new();
+AccountsList->backCompatible();
+
 my $transactions = [];
 readClassicTransactions($transactions);
 #say Dumper $transactions;
