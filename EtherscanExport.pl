@@ -11,6 +11,8 @@ use JSON::Parse qw(parse_json json_file_to_perl);
 use LWP::Simple;
 use vars qw(%opt);
 use Getopt::Long;
+use lib '.';
+use AccountsList;
 
 
 # Process an Etherscan.io export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
@@ -28,6 +30,7 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'owner:s' => \$opt{owner}, # 
+			'quick!' =>\$opt{quick},
 			'start:s' => \$opt{start}, # starting address
 			'trace:s' => \$opt{trace}, # starting address
 			'trans:s' => \$opt{trans}, # starting address
@@ -102,6 +105,7 @@ sub getJson {
 	my $ua = new LWP::UserAgent;
 	$ua->agent("banana/1.0");
 	my $request = new HTTP::Request("GET", $url);
+	say "$url";
 	my $response = $ua->request($request);
 	my $content = $response->content;
 	if ($content) {
@@ -140,22 +144,6 @@ sub getJsonBalance {
 	return $result;
 }
 
-# addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
-sub addressDesc {
-	my ($address, $field) = @_;
-	$field ||= 'Desc'; #  default is to return the description for the given address
-	state $desc = undef; # Descriptions keyed on address
-	$address = lc $address; # force lowercase for lookups
-	if (not defined $desc) {
-		my $ad  = csv( in => "$opt{datadir}/$opt{desc}", headers => "auto", filter => {1 => sub {length > 1} } );
-		foreach my $rec (@$ad) {
-			$rec->{Address} = lc $rec->{Address}; # force lowercase
-			$desc->{$rec->{Address}} = $rec;
-		}
-	}
-	return $desc->{$address}{$field} if $address;
-	return $desc;
-}
 
 sub convertFileToJson {
 	my $aoh = shift;
@@ -179,7 +167,7 @@ sub readEtherscan { # take an address return a pointer to array of hashes contai
 	state $processed;
 	$address = lc $address;
 	my $aoh = [];
-	return $aoh if ($processed->{$address} or addressDesc($address,'Follow') eq 'N');
+	return $aoh if ($processed->{$address} or AccountsList->address($address,'Follow') eq 'N');
 	$processed->{$address} = 1;
 
 	my $f = "$opt{datadir}/export-$address.csv";
@@ -188,11 +176,11 @@ sub readEtherscan { # take an address return a pointer to array of hashes contai
 		convertFileToJson($aoh);
 #		push @$transactions, @$aoh;
 	}
-	elsif (addressDesc($address,'Follow') eq 'N') {
+	elsif (AccountsList->address($address,'Follow') eq 'N') {
 		say "Not following $address";
 	}
 	else {
-		say "Missing file $f " . addressDesc($address);
+		say "Missing file $f " . AccountsList->address($address);
 	}
 	
 	foreach my $tran (@$aoh) {
@@ -203,10 +191,10 @@ sub readEtherscan { # take an address return a pointer to array of hashes contai
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
 		$tran->{source} = 'EtherscanExport.pl'; # to identify the source in Banana
 		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
-		$tran->{toDesc} = addressDesc($to) || "Unknown";
-		$tran->{fromDesc} = addressDesc($from) || "Unknown";
-		$tran->{toS} = substr($tran->{to},0,6);
-		$tran->{fromS} = substr($tran->{from},0,6);
+		$tran->{toDesc} = AccountsList->address($to, 'Description') || "Unknown";
+		$tran->{fromDesc} = AccountsList->address($from, 'Description') || "Unknown";
+		$tran->{toS} = substr($tran->{to},0,8);
+		$tran->{fromS} = substr($tran->{from},0,8);
 		push @$transactions, $tran;
 
 #		readEtherscan($from, $transactions) unless $processed->{$from};
@@ -221,7 +209,7 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 	$address = lc $address;
 	state $processed;
 	my $aoh = [];
-	return $aoh if ($processed->{$address} or addressDesc($address,'Follow') eq 'N');;
+	return $aoh if ($processed->{$address} or AccountsList->address($address,'Follow') eq 'N');;
 	$processed->{$address} = 1;
 
 	$aoh = getJson($address,'txlist');
@@ -236,16 +224,27 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 			say "Found! $tran->{hash}" ;
 		}
 		my ($to, $from) = ($tran->{to}, $tran->{from});
+		
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
 		if ($tran->{isError}) {
 			$tran->{value} = 0; # e.g. if transaction is Out Of Gas. Keep the transaction because the fee is still charged.
 		}
+		$to ||= $tran->{contractAddress}; # eg hash 0xf904b24eb23de15624f8eaa1e005b94bfd3cd3bb6b589a0c28a8cbc36ddd2c8f contract invocation
+		if ($opt{trace} and ($tran->{from} =~ /$opt{trace}/ or $tran->{to} =~ /$opt{trace}/)) {
+			say "Found tracing $opt{trace} ! From: $tran->{from} To: $tran->{to}" ;
+		}
+		my $fromaccount = AccountsList->address($from);
+		my $toaccount = AccountsList->address($to);
+		say "From account missing from AccountsList: From: $from To: $to" if !defined $fromaccount;
+		say "To account missing from AccountsList: From: $from To: $to" if !defined $toaccount;
 		$tran->{source} = 'Etherscan'; # to identify the source in Banana
 		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
-		$tran->{toDesc} = addressDesc($to) || "Unknown";
-		$tran->{fromDesc} = addressDesc($from) || "Unknown";
-		$tran->{toS} = substr($tran->{to},0,6);
-		$tran->{fromS} = substr($tran->{from},0,6);
+		$tran->{toDesc} = AccountsList->address($to, 'Description') || "Unknown";
+		$tran->{fromDesc} = AccountsList->address($from, 'Description') || "Unknown";
+		$tran->{toAccountName} = AccountsList->address($to, 'AccountName') || "UnknownAccountName";
+		$tran->{fromAccountName} = AccountsList->address($from, 'AccountName') || "UnknownAccountName";
+		$tran->{toS} = substr($tran->{to},0,8);
+		$tran->{fromS} = substr($tran->{from},0,8);
 		$tran->{Value} = $tran->{value} / 1e18; # Value in ETH
 		$tran->{txnFee} = $tran->{gasPrice} * $tran->{gasUsed}; # txn fee in Wei
 		$tran->{TxnFee} = $tran->{txnFee} / 1e18; # txnfee in ETH
@@ -264,13 +263,14 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		$tran->{rateccy} = '';
 		$tran->{fee} = $tran->{TxnFee};
 		$tran->{feeccy} = $tran->{ccy};
-		$tran->{owner} = $opt{owner};
+		$tran->{owner} = AccountsList->address($from, 'Owner');
+		$tran->{toowner} = AccountsList->address($to, 'Owner');
 		
 		push @$transactions, $tran;
 
 #		readJson($from, $transactions) unless $processed->{$from};
 		if ($opt{owner}) {
-			readJson($to, $transactions) if addressDesc($to,'Owner') eq $opt{owner} and not $processed->{$to};
+			readJson($to, $transactions) if AccountsList->address($to,'Owner') eq $opt{owner} and not $processed->{$to};
 		}
 	}
 			
@@ -296,28 +296,28 @@ sub calcBalances {
 sub printBalances {
 	my $balances = shift;
 	foreach my $address (sort keys %$balances) {
-		next if addressDesc($address,'Follow') eq 'N';
+		next if AccountsList->address($address,'Follow') eq 'N';
 		my $bal1 = $balances->{$address} / 1e18;
 		my $bal2 = getJsonBalance($address) / 1e18;
-		say "$address $bal1 $bal2 " . addressDesc($address);
+		say "$address $bal1 $bal2 " . AccountsList->address($address, 'Description');
 	}
 }
 
 sub printTransactions {
 	my ($transactions,$address) = @_;
 	my $processed;
-	foreach my $t (sort {$a->{UnixTimestamp} <=> $b->{UnixTimestamp}} @$transactions) {
+	foreach my $t (sort {$a->{dt} <=> $b->{dt}} @$transactions) {
 		next if $processed->{$t->{hash}};
 		$processed->{$t->{hash}} = 1;
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
-		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'Value'} ETH $t->{toS} $t->{toDesc}\n";
+		print "$t->{T} $t->{fromS} $t->{owner} $t->{fromAccountName} $t->{'Value'} $t->{amountccy} $t->{toS} $t->{toAccountName} $t->{toowner}\n";
 	}
 }
 
 sub printMySQLTransactions {
 	my $trans = shift;
     print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$trans) {
+    for my $rec (sort {$a->{dt} <=> $b->{dt}} @$trans) {
     	my $dt = $rec->{dt};
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
@@ -339,7 +339,8 @@ sub saveTransactions {
 }
 
 sub getAllTransactions {
-	my ($addresses, $tj) = @_;
+	my ( $tj) = @_;
+	my $addresses = AccountsList->addresses("ETH");
 	foreach my $ad (sort keys %$addresses) {
 		my $h = $addresses->{$ad};
 		if($h->{Follow} eq 'Y') {
@@ -352,7 +353,9 @@ sub getAllTransactions {
 
 # Main Program
 printHelp if $opt{h};
-my $addresses = addressDesc(); # initialise the addresses
+AccountsList->new();
+AccountsList->backCompatible();
+
 #getJsonBalance('txnFee');
 
 #say 'File transactions:';
@@ -369,10 +372,14 @@ if($opt{start}) {
 	print "Start address $opt{start}\n";
 	readJson($opt{start}, $tj);
 }
-else {
-	getAllTransactions($addresses, $tj);
+elsif($opt{quick}) {
+	getAllTransactions($tj);
+	printTransactions($tj);
 }
-printMySQLTransactions($tj);
+else {
+	getAllTransactions($tj);
+	printMySQLTransactions($tj);
+}
 saveTransactions($tj);
 #my $bj = calcBalances($tj);
 #print Dumper $bj;
