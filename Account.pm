@@ -1,27 +1,41 @@
-use feature qw(state say);
-#use warnings;
-use English;
-use strict;
-# https://github.com/DavidLittle/bitstamp-banana.git
-use Data::Dumper;
+package Account;
+
+use Moose;
+use Moose::Util::TypeConstraints;
+
 use lib '.';
 use Person;
 
-package Account;
-use Carp qw(carp croak);
+enum 'Currency' => [qw( BCH BTC ETC ETH USD GBP EUR DASH)];
 
-use Class::Tiny qw(idAccounts AccountRef AccountName Description AccountOwner Currency AccountType Follow Accountable ShapeShift Source BananaCode Owner AccountRefUnique AccountRefShort);
+has idAccounts 	=> (is => 'ro', isa => 'Int');
+has AccountRef 	=> (is => 'rw', isa => 'Str', required => 1,);
+has AccountName 	=> (is => 'ro', isa => 'Str');
+has Description	=> (is => 'ro', isa => 'Str');
+has AccountOwner	=> (is => 'ro', isa => 'Str');
+has Currency 	=> (is => 'ro', isa => 'Currency', required => 1,);
+has AccountType 	=> (is => 'ro', isa => 'Str');
+has Follow 	=> (is => 'ro', isa => 'Str');
+has Accountable 	=> (is => 'ro', isa => 'Str');
+has ShapeShift 	=> (is => 'ro', isa => 'Str');
+has Source 	=> (is => 'ro', isa => 'Str');
+has BananaCode 	=> (is => 'ro', isa => 'Str');
+has Owner 	=> (is => 'rw', isa => 'Person');
+has AccountRefUnique 	=> (is => 'rw', isa => 'Str');
+has AccountRefShort	=> (is => 'rw', isa => 'Str');
+
 
 sub BUILD {
 	my ($self, $args) = @_;
-	carp "AccountRef attribute required for account $args->{idAccounts}" if ! $self->AccountRef();
-	carp "Currency attribute required for account $args->{idAccounts} $args->{AccountRef}" if ! $self->Currency();
-    $self->Owner(Person->name($args->{AccountOwner}));
+    $self->Owner(Person->new($args->{AccountOwner}));
     $self->AccountRefUnique($args->{AccountRef});
     my $t = $args->{AccountRef};
     $t =~ s/-.*//;
     $self->AccountRef($t);
     $self->AccountRefShort(substr($args->{AccountRef},0,8));
 }
+
+no Moose;
+__PACKAGE__->meta->make_immutable;
 
 return 1;
