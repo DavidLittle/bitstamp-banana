@@ -13,7 +13,9 @@ use vars qw(%opt);
 use Getopt::Long;
 use lib '.';
 use AccountsList;
-
+use Account;
+use Person;
+use Transaction;
 
 # Process an Etherscan.io export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
 # Program works in several stages:
@@ -25,11 +27,10 @@ use AccountsList;
 
 # Commandline args
 GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
-			'desc:s' => \$opt{desc}, # 
-			'g:s' => \$opt{g}, # 
-			'h' => \$opt{h}, # 
+			'desc:s' => \$opt{desc}, #
+			'g:s' => \$opt{g}, #
+			'h' => \$opt{h}, #
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'owner:s' => \$opt{owner}, # 
 			'quick!' =>\$opt{quick},
 			'start:s' => \$opt{start}, # starting address
 			'trace:s' => \$opt{trace}, # starting address
@@ -37,25 +38,14 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "ACK.csv"; #"AddressDescriptions.dat";
 $opt{key} ||= 'TQPWAY66XX2SXFGPTT7677TENHFFQTMGNH'; # from etherscan.io
 $opt{trans} ||= "EtherTransactions.dat";
-
-if ($opt{owner} eq 'David') {
-	$opt{start} ||= "0x34a85d6d243fb1dfb7d1d2d44f536e947a4cee9e";
-} elsif ($opt{owner} eq 'Richard') {
-	$opt{start} ||= "0xf51fded80acb502890e87369741f3722514cefff";
-} elsif ($opt{owner} eq 'Kevin') {
-	$opt{start} ||= "0x793C64E8D1c70DD1407Bca99C8A97eA8eb662ECc";
-}
 
 # Global variables
 
 my $cablefile = "Cable.dat";
 my $cable = {}; # hash keyed on date containing daily USD/GBP exchange rates
-my %BananaMapping = (
-    "David,BTC" => 10100,
-);
+
 my $url = "https://api.etherscan.io/api?";
 my $txlist = "${url}module=account&action=txlist&startblock=0&endblock=99999999&sort=asc&apikey=$opt{key}"; # add &address=$address
 my $txlistinternal = "${url}module=account&action=txlistinternal&startblock=0&endblock=99999999&sort=asc&apikey=$opt{key}"; # add &address=$address
@@ -68,22 +58,20 @@ sub printHelp {
 
 Usage: $0 [options]
 
-Options 
+Options
 	[ -d datadir ]      - path to directory where all datafiles are stored
-	[ --desc file ]	    - file containing address descriptions
 	[ --help ]          - print this help and exit
 	[ --key apikey ]    - get an API key from https://etherscan.io/myapikey
-	[ --owner name ]    - owner of the address from AddressDescription file
 	[ --start address ] - starting address to retrieve and follow transaction train
-	
-	
+
+
 HELP
 ;
 exit 0;
 }
 
 sub renameExportFiles {
-	# Ethereum addresses are hexadecimal and not case sensitive. But case is used to help avoid mistyping addresses. 
+	# Ethereum addresses are hexadecimal and not case sensitive. But case is used to help avoid mistyping addresses.
 	# For our purposes we want all addresses to be lowercase all the time. This renames export files forcing lowercase
 	my @files = glob "$opt{datadir}/export-*.csv";
 	foreach my $f (@files) {
@@ -113,7 +101,7 @@ sub getJson {
 		if ($data->{message} eq "OK" and $data->{status} == 1) {
 			$result = $data->{result};
 		}
-	}	
+	}
 	store($result, $cachefile);
 	return $result;
 }
@@ -139,7 +127,7 @@ sub getJsonBalance {
 		if ($data->{message} eq "OK" and $data->{status} == 1) {
 			$result = $data->{result};
 		}
-	}	
+	}
 	store(\$result, $cachefile);
 	return $result;
 }
@@ -182,7 +170,7 @@ sub readEtherscan { # take an address return a pointer to array of hashes contai
 	else {
 		say "Missing file $f " . AccountsList->address($address);
 	}
-	
+
 	foreach my $tran (@$aoh) {
 		$tran->{'hash'} = $tran->{Txhash};
 		next if $processed->{$tran->{hash}} == 1;
@@ -200,7 +188,7 @@ sub readEtherscan { # take an address return a pointer to array of hashes contai
 #		readEtherscan($from, $transactions) unless $processed->{$from};
 		readEtherscan($to, $transactions) unless $processed->{$to};
 	}
-			
+
 	return;
 }
 
@@ -216,64 +204,57 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 	my $aoh2 = getJson($address,'txlistinternal');
 	push @$aoh, @$aoh2;
 #	push @$transactions, @$aoh;
-	
+
 	foreach my $tran (@$aoh) {
 		next if $processed->{$tran->{hash}} == 1;
 		$processed->{$tran->{hash}} = 1;
 		if ($opt{trace} and $tran->{hash} =~ /$opt{trace}/) {
 			say "Found! $tran->{hash}" ;
 		}
+		if ($tran->{hash} eq '0x48cc8e48645959e1501655a807cd188adfd607abf554d5d6c7447ddf839ce76d') {
+			# Sadly etherscan.io API does not return correct info for invocation of ReplaySafeSplit contract - force the addresses
+			$tran->{to} = '0x93a44c99642a02fc4e62a97e13c703932682db36';
+			$tran->{from} = '0xd5fbb237f5200b097031025cdb914c4595bceffa';
+		}
 		my ($to, $from) = ($tran->{to}, $tran->{from});
-		
+
 		my $dt = DateTime->from_epoch( epoch => $tran->{timeStamp} );
 		if ($tran->{isError}) {
 			$tran->{value} = 0; # e.g. if transaction is Out Of Gas. Keep the transaction because the fee is still charged.
 		}
 		$to ||= $tran->{contractAddress}; # eg hash 0xf904b24eb23de15624f8eaa1e005b94bfd3cd3bb6b589a0c28a8cbc36ddd2c8f contract invocation
-		if ($opt{trace} and ($tran->{from} =~ /$opt{trace}/ or $tran->{to} =~ /$opt{trace}/)) {
+		if ($opt{trace} and ($tran->{from} =~ /$opt{trace}/i or $tran->{to} =~ /$opt{trace}/i)) {
 			say "Found tracing $opt{trace} ! From: $tran->{from} To: $tran->{to}" ;
 		}
-		my $fromaccount = AccountsList->address($from);
-		my $toaccount = AccountsList->address($to);
+		my $fromaccount = AccountsList->account($from);
+		my $toaccount = AccountsList->account($to);
 		say "From account missing from AccountsList: From: $from To: $to" if !defined $fromaccount;
 		say "To account missing from AccountsList: From: $from To: $to" if !defined $toaccount;
-		$tran->{source} = 'Etherscan'; # to identify the source in Banana
-		$tran->{T} = $dt->dmy("/") . " " . $dt->hms();
-		$tran->{toDesc} = AccountsList->address($to, 'Description') || "Unknown";
-		$tran->{fromDesc} = AccountsList->address($from, 'Description') || "Unknown";
-		$tran->{toAccountName} = AccountsList->address($to, 'AccountName') || "UnknownAccountName";
-		$tran->{fromAccountName} = AccountsList->address($from, 'AccountName') || "UnknownAccountName";
-		$tran->{toS} = substr($tran->{to},0,8);
-		$tran->{fromS} = substr($tran->{from},0,8);
-		$tran->{Value} = $tran->{value} / 1e18; # Value in ETH
-		$tran->{txnFee} = $tran->{gasPrice} * $tran->{gasUsed}; # txn fee in Wei
-		$tran->{TxnFee} = $tran->{txnFee} / 1e18; # txnfee in ETH
-		$tran->{ccy} = 'ETH';
-		# Following fields are for printMySQLTransactions
-		$tran->{type} = 'Transfer';
-		$tran->{subtype} = 'Etherscan';
-		$tran->{dt} = $dt;
-		$tran->{account} = $from;
-		$tran->{toaccount} = $to;
-		$tran->{amount} = $tran->{Value};
-		$tran->{amountccy} = $tran->{ccy};
-		$tran->{valueX} = $tran->{Value};
-		$tran->{valueccy} = $tran->{ccy};
-		$tran->{rate} = '';
-		$tran->{rateccy} = '';
-		$tran->{fee} = $tran->{TxnFee};
-		$tran->{feeccy} = $tran->{ccy};
-		$tran->{owner} = AccountsList->address($from, 'Owner');
-		$tran->{toowner} = AccountsList->address($to, 'Owner');
-		
-		push @$transactions, $tran;
-
-#		readJson($from, $transactions) unless $processed->{$from};
-		if ($opt{owner}) {
-			readJson($to, $transactions) if AccountsList->address($to,'Owner') eq $opt{owner} and not $processed->{$to};
+		$tran->{to_account} = $toaccount;
+		$tran->{from_account} = $fromaccount;
+		if(!defined $tran->{to_account} or !defined $tran->{from_account}) {
+			say "Oops from_account $tran->{from}";
+			say "Oops to_account $tran->{to}";
 		}
+		$tran->{value} /= 1e18; # Value in ETH
+		$tran->{currency} = 'ETH';
+		# Following fields are for printMySQLTransactions
+		$tran->{tran_type} = 'Transfer';
+		$tran->{tran_subtype} = 'Etherscan';
+		$tran->{dt} = $dt;
+		$tran->{amount} = $tran->{value};
+		$tran->{amountccy} = $tran->{ccy};
+#		$tran->{value} = $tran->{Value};
+#		$tran->{value_currency} = $tran->{ccy};
+#		$tran->{rate} = 0;
+#		$tran->{rateccy} = '';
+		$tran->{fee} = $tran->{gasPrice} * $tran->{gasUsed} / 1e18; # txn fee in ETH
+		$tran->{fee_currency} = $tran->{currency};
+
+		my $T = Transaction->new($tran);
+
+		push @$transactions, $T;
 	}
-			
 	return;
 }
 
@@ -299,7 +280,7 @@ sub printBalances {
 		next if AccountsList->address($address,'Follow') eq 'N';
 		my $bal1 = $balances->{$address} / 1e18;
 		my $bal2 = getJsonBalance($address) / 1e18;
-		say "$address $bal1 $bal2 " . AccountsList->address($address, 'Description');
+		say "$address $bal1 $bal2 " . AccountsList->account($address, 'Description');
 	}
 }
 
@@ -310,26 +291,15 @@ sub printTransactions {
 		next if $processed->{$t->{hash}};
 		$processed->{$t->{hash}} = 1;
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
-		print "$t->{T} $t->{fromS} $t->{owner} $t->{fromAccountName} $t->{'Value'} $t->{amountccy} $t->{toS} $t->{toAccountName} $t->{toowner}\n";
+		print "$t->{T} $t->{fromAccount}{AccountRefShort} $t->{fromAccount}{Owner} $t->{fromAccount}{AccountName} $t->{'Value'} $t->{amountccy} $t->{toAccount}{AccountRefShort} $t->{toAccount}{AccountName} $t->{toAccount}{Owner}\n";
 	}
 }
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (sort {$a->{dt} <=> $b->{dt}} @$trans) {
-    	my $dt = $rec->{dt};
-    	my $datetime = $dt->datetime(" ");
-    	$rec->{subtype} ||= 'NULL';
-    	$rec->{toaccount} ||= 'NULL';
-    	$rec->{valueX} ||= 'NULL';
-    	$rec->{valueccy} ||= 'NULL';
-    	$rec->{rate} ||= 'NULL';
-    	$rec->{rateccy} ||= 'NULL';
-    	$rec->{fee} ||= 'NULL';
-    	$rec->{feeccy} ||= 'NULL';
-    	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+    Transaction->printMySQLHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->printMySQL;
 	}
 }
 
@@ -384,6 +354,3 @@ saveTransactions($tj);
 #my $bj = calcBalances($tj);
 #print Dumper $bj;
 #printBalances($bj);
-
-
-

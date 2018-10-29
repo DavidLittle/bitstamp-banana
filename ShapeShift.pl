@@ -51,7 +51,6 @@ GetOptions(
 
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "ACK.csv"; # "AddressDescriptions.dat";
 $opt{key} ||= ''; # from shapeshift.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{trans} ||= "ShapeshiftTransactions.dat";
@@ -91,35 +90,12 @@ sub getTxStat {
 	return 0; # What should we return here??	
 }
 
-=item
-# addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
-sub addressDesc {
-	my ($address, $field) = @_;
-	$field ||= 'Desc'; #  default is to return the description for the given address
-	state $desc = undef; # Descriptions keyed on address
-	$address = lc $address  if $address =~ /^0x/; # force lowercase for lookups
-	if (not defined $desc) {
-		my $ad  = csv( in => "$opt{datadir}/$opt{desc}", headers => "auto", filter => {1 => sub {length > 1} } );
-		foreach my $rec (@$ad) {
-			$rec->{Address} = lc $rec->{Address} if $rec->{Address} =~ /^0x/; # force lowercase for ethereum addresses
-			$desc->{$rec->{Address}} = $rec;
-			if ($opt{trace} and $opt{trace} eq $rec->{Address}) {
-				say "traceing address $opt{trace}";
-				print Dumper $rec;
-			}
-		}
-	}
-	return $desc->{$address}{$field} if $address;
-	return $desc;
-}
-=cut
-
 sub getTransactionDate {
 	my $data = shift;
 	if ($data->{incomingType} eq "ETH") {
 	
 	}
-	return DateTime->now;
+	return DateTime->now->truncate( to => 'day' ); # dirty hack to make extracts created on the same day comparable
 }
 
 sub getAddressesFromFiles {

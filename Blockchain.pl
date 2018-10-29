@@ -11,6 +11,8 @@ use JSON::Parse qw(parse_json json_file_to_perl);
 use LWP::Simple;
 use vars qw(%opt);
 use Getopt::Long;
+use lib '.';
+use AccountsList;
 
 
 # Process Blockchain.info API 
@@ -23,6 +25,7 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'h' => \$opt{h}, # 
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'owner:s' => \$opt{owner}, # 
+			'quick!' => \$opt{quick},
 			'start:s' => \$opt{start}, # starting address
 			'trace:s' => \$opt{trace}, # trace hash or address
 			'trans:s' => \$opt{trans}, # Blockchain transactions datafile
@@ -32,7 +35,6 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "ACK.csv"; # "AddressDescriptions.dat";
 $opt{key} ||= ''; # from etherscan.io
 $opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{start} ||= "";
@@ -45,24 +47,6 @@ my $txurl = "${url}rawtx/";
 my $addrurl = "${url}rawaddr/";
 
 my $BCHForkTime = DateTime->new(year=>2017,month=>8,day=>1,hour=>13,minute=>16,second=>14,time_zone=>'UTC');
-
-# addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
-sub addressDesc {
-	my ($address, $field) = @_;
-	$field ||= 'Desc'; #  default is to return the description for the given address
-	state $desc = undef; # Descriptions keyed on address
-	$address = lc $address if $address =~ /^0x/; # force lowercase for lookups on Ethereum type addresses
-	if (not defined $desc) {
-		my $ad  = csv( in => "$opt{datadir}/$opt{desc}", headers => "auto", filter => {1 => sub {length > 1} } );
-		foreach my $rec (@$ad) {
-			$rec->{Address} = lc $rec->{Address} if $rec->{Address} =~ /^0x/; # force lowercase for lookups on Ethereum type addresses
-			$desc->{$rec->{Address}} = $rec;
-		}
-	}
-	return $desc->{$address} if $field eq 'All';
-	return $desc->{$address}{$field} if $address;
-	return $desc;
-}
 
 sub getTx {
 	my $tran = shift;
@@ -77,6 +61,7 @@ sub getTx {
 		return $result;
 	}
 	my $url = "${txurl}$tran";
+	say "$url";
 	my $ua = new LWP::UserAgent;
 	$ua->agent("banana/1.0");
 	my $request = new HTTP::Request("GET", $url);
@@ -103,7 +88,7 @@ sub getAddr {
 	$docache ||= 1; # Normally we want to cache results. Except when testing addresses eg for Armory wallet
 	state $processedad;
 #	$address = lc $address; # Can't lowercase bitcoin addresses or transactions
-	return undef if ($processedad->{$address} or addressDesc($address,'Follow') eq 'N');
+	return undef if ($processedad->{$address} or AccountsList->address($address,'Follow') eq 'N');
 	$processedad->{$address} = 1;
 	my $cachefile = "$opt{datadir}/BTCaddr$address.json"; # reads from cache file if one exists. Otherwise calls api and stores to cache file
 	my $result = 0;
@@ -112,12 +97,13 @@ sub getAddr {
 		return $result;
 	}
 	my $url = "${addrurl}$address";
+	say "$url";
 	my $ua = new LWP::UserAgent;
 	$ua->agent("banana/1.0");
 	my $request = new HTTP::Request("GET", $url);
 	my $response = $ua->request($request);
 	my $content = $response->content;
-	if ($content eq "Address not found" or $content =~ /^Illegal character/ or $content =~ /^Can't connect/) {
+	if ($content eq "Address not found" or $content =~ /^Illegal character/ or $content =~ /^Can't connect/ or $content =~ /Checksum does not validate/) {
 		say "$content address:$address";
 		$content = "";
 	}
@@ -131,7 +117,7 @@ sub getAddr {
 			return $data;
 		}
 	}	
-	store($data, $cachefile) if $docache;
+	# store($data, $cachefile) if $docache; # We don't wat to store anything if it's a temporary problem like no internet connection
 	return $data;
 }
 
@@ -214,15 +200,15 @@ sub processShapeShiftTransactions {
 	}
 }
 
-sub getTransactionsFromAddressDesc {
-	my $d = shift;
+sub getTransactionsFromAccountsList {
 	my $transactions = [];
 	my $processed;
-	foreach my $address (sort keys %$d) {
-		my $owner = $d->{$address}{Owner};
-		my $follow = $d->{$address}{Follow} eq 'Y';
-		my $currency = $d->{$address}{Currency};
-		my $sstype = $d->{$address}{ShapeShift}; # set to Input or Output if this is a ShapeShift transaction
+	my $accounts = AccountsList->addresses('BTC');
+	foreach my $address (sort keys %$accounts) {
+		my $owner = $accounts->{$address}{Owner};
+		my $follow = $accounts->{$address}{Follow} eq 'Y';
+		my $currency = $accounts->{$address}{Currency};
+		my $sstype = $accounts->{$address}{ShapeShift}; # set to Input or Output if this is a ShapeShift transaction
 
 		if ($currency eq 'BTC' and $follow ) {
 			my $data = getAddr($address);
@@ -255,13 +241,13 @@ sub doSOmethingUseful {
 				say "Tracing input address $addr";
 			}
 			$data->{invalue} += $in->{value};
-			my $owner = addressDesc($addr,'Owner');
+			my $owner = AccountsList->address($addr,'Owner');
 			$in->{inowner} = $owner; 
 			$data->{inownercount}{$owner}++;
-			my $follow = addressDesc($addr,'Follow');
+			my $follow = AccountsList->address($addr,'Follow');
 			$in->{infollow} = $follow;
 			$data->{infollowcount}{$follow}++;
-			my $ss = addressDesc($addr,'ShapeShift');
+			my $ss = AccountsList->address($addr,'ShapeShift');
 			$in->{ShapeShift} = $ss;
 			$data->{inshapeshiftcount}{$ss}++;
 			$data->{incount}++;
@@ -271,23 +257,24 @@ sub doSOmethingUseful {
 			if ($opt{trace} and $opt{trace} eq $addr) {
 				say "Tracing output address $addr";
 			}
-			$SSoutput = addressDesc($addr,'ShapeShift') eq 'Output';
+			$SSoutput = AccountsList->address($addr,'ShapeShift') eq 'Output';
 			$data->{outvalue} += $out->{value};
-			my $owner = addressDesc($addr,'Owner');
+			my $owner = AccountsList->address($addr,'Owner');
 			$data->{outknowncount}++ if $owner;
 			$out->{owner} = $owner; 
 			$data->{outownercount}{$owner}++;
-			my $follow = addressDesc($addr,'Follow');
+			my $follow = AccountsList->address($addr,'Follow');
 			$out->{outfollow} = $follow;
 			$data->{outfollowcount}{$follow}++;
-			my $ss = addressDesc($addr,'ShapeShift');
+			my $ss = AccountsList->address($addr,'ShapeShift');
 			$out->{ShapeShift} = $ss;
 			$data->{outshapeshiftcount}{$ss}++;
 			$data->{outcount}++;
 		}
-		if ($data->{outfollowcount}{'Y'} == 1 and $data->{inownercount}{''} == $data->{incount}) {
+		if ($data->{outfollowcount}{'Y'} == 1 and ($data->{inownercount}{''} == $data->{incount} or $data->{infollowcount}{'Y'} == 0) ) {
 			# Many to one (or 2) many inputs can be collapsed into one dummy address
 			# This is a ShapeShift Output transaction. There could be many inputs and they are all ShapeShift internal addresses (unknown to addressDesc)
+			# Or this is a Bitstamp withdrawal to multiple outputs only one of which is ours. We can ignore all the inputs which if present should all be Follow=N
 			# There will be one or two outputs. One is the Address that ShapeShift has sent the funds to - it should be owned by one of us with Follow=Y
 			# The second output address is optional change address and would not be known to us
 			# There may be trades other than ShapeShift that fit the same criteria, so we don't check that every input is ShapeShift=Output address.
@@ -302,6 +289,11 @@ sub doSOmethingUseful {
 			}
 			my $account = "Unknown addresses";
 			$account = "ShapeShiftInternalAddresses" if $out->{ShapeShift} eq 'Output'; # output ShapeShift withdrawal address, therefore input is SS internal
+			# 
+			$account = "BitstampInternalAddresses" if $data->{inownercount}{'Bitstamp'} > 0; # We only need to identify 1 input in the Accounts file 
+			$account = "itBitInternalAddresses" if $data->{inownercount}{'itBit'} > 0; # We only need to identify 1 input in the Accounts file 
+			$account = "MtGoxWithdraw" if $data->{inownercount}{'MtGox'} > 0; # We only need to identify 1 input in the Accounts file 
+			$account = "LocalBitcoins" if $data->{inownercount}{'LocalBitcoins'} > 0; # We only need to identify 1 input in the Accounts file 
 			
 			$data->{type} = "Transfer";
 			$data->{subtype} = "Bitcoin";
@@ -520,6 +512,23 @@ sub printMySQLTransactions {
 	}
 }
 
+sub printTransactions {
+	my ($transactions,$address) = @_;
+	my $processed;
+	foreach my $t (sort {$a->{dt} <=> $b->{dt}} @$transactions) {
+		next if $processed->{$t->{hash}};
+		$processed->{$t->{hash}} = 1;
+    	my $datetime = $t->{dt}->datetime(" ");
+		next if $address and $t->{from} ne $address and $t->{to} ne $address;
+		my $fromAccount = AccountsList->address($t->{account});
+		my $toAccount = AccountsList->address($t->{toaccount});
+		my $fromS = substr($t->{account},0,8);
+		my $toS = substr($t->{toaccount},0,8);
+		my $shorthash = substr($t->{hash},0,6) . ".." . substr($t->{hash},-6,6);
+		print "$datetime $fromS $fromAccount->{Owner} $fromAccount->{AccountName} $t->{'amount'} $t->{amountccy} $toAccount->{AccountName} $toAccount->{Owner} $toS $shorthash\n";
+	}
+}
+
 sub testArmoryAddresses {
 	my $armoryAddressFile = "armoryFull.txt";
 	open(my $fh, "<", $armoryAddressFile) || die "Failed to open $armoryAddressFile";
@@ -577,13 +586,13 @@ sub printBalances {
 	my $balances = shift;
 	foreach my $addr (sort keys %$balances) {
 		next unless $addr;
-		my $d = addressDesc($addr,'All');
+		my $d = AccountsList->address($addr);
 		next if $d->{Follow} eq 'N';
 		my $bal1 = $balances->{$addr};
 		$bal1 = 0 if $bal1 < 0.0000001;
 		next if $bal1 == 0;
 #		my $bal2 = getJsonBalance($addr) / 1e18;
-#		say "$addr $bal1 $bal2 " . addressDesc($address);
+#		say "$addr $bal1 $bal2 " . AccountsList->address($address);
 		say "$addr $bal1 $d->{AccountName} $d->{Owner} $d->{Follow}";
 	}
 }
@@ -592,6 +601,9 @@ sub saveTransactions {
 	my $trans = shift;
 	store($trans, "$opt{datadir}/$opt{trans}");
 }
+
+AccountsList->new();
+AccountsList->backCompatible();
 
 if ($opt{start}) {
 	my $d = getTx($opt{start});
@@ -606,19 +618,22 @@ elsif ($opt{testArmory}) {
 
 }
 elsif ($opt{balances}) {
-	my $d = addressDesc();
-	my $t = getTransactionsFromAddressDesc($d);
+	my $t = getTransactionsFromAccountsList();
 	my $t1 = doSOmethingUseful($t);
 	printBalances(calcBalances($t1, $BCHForkTime));
 }
+elsif ($opt{quick}) {
+	my $t = getTransactionsFromAccountsList();
+	my $t1 = doSOmethingUseful($t);
+	printTransactions($t1);
+	saveTransactions($t1);
+}
 else {
-	my $d = addressDesc();
-	my $t = getTransactionsFromAddressDesc($d);
+	my $t = getTransactionsFromAccountsList();
 	my $t1 = doSOmethingUseful($t);
 	printMySQLTransactions($t1);
 	saveTransactions($t1);
 }
-
 
 # NULL addresses
 # Tokens - VEE, Stellar, ...

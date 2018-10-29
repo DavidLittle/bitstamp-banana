@@ -126,7 +126,7 @@ sub backCompatible { # Create the old AddressDEscription fields. Can be removed 
 		$val->{Address} = $val->{AccountRef};
 		$val->{Desc} = $val->{Description};
 		$val->{ownerId} = $val->{AccountOwner};
-		$val->{Owner} = Person->name($val->{AccountOwner});
+		$val->{Owner} = Person->new($val->{AccountOwner});
 	}
 }
 
