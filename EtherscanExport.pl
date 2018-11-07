@@ -248,7 +248,8 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 #		$tran->{value_currency} = $tran->{ccy};
 #		$tran->{rate} = 0;
 #		$tran->{rateccy} = '';
-		$tran->{fee} = $tran->{gasPrice} * $tran->{gasUsed} / 1e18; # txn fee in ETH
+		$tran->{from_fee} = $tran->{gasPrice} * $tran->{gasUsed} / 1e18; # txn fee in ETH
+		$tran->{to_fee} = 0; # txn fee in ETH
 		$tran->{fee_currency} = $tran->{currency};
 
 		my $T = Transaction->new($tran);
@@ -284,7 +285,7 @@ sub printBalances {
 	}
 }
 
-sub printTransactions {
+sub xprintTransactions {
 	my ($transactions,$address) = @_;
 	my $processed;
 	foreach my $t (sort {$a->{dt} <=> $b->{dt}} @$transactions) {
@@ -292,6 +293,13 @@ sub printTransactions {
 		$processed->{$t->{hash}} = 1;
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
 		print "$t->{T} $t->{fromAccount}{AccountRefShort} $t->{fromAccount}{Owner} $t->{fromAccount}{AccountName} $t->{'Value'} $t->{amountccy} $t->{toAccount}{AccountRefShort} $t->{toAccount}{AccountName} $t->{toAccount}{Owner}\n";
+	}
+}
+sub printTransactions {
+	my $trans = shift;
+    Transaction->printHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->print;
 	}
 }
 

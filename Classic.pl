@@ -31,7 +31,7 @@ GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'g:s' => \$opt{g}, #
 			'help' => \$opt{h}, #
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'owner:s' => \$opt{owner}, #
+			'quick!' => \$opt{quick}, #
 			'start:s' => \$opt{start}, # starting address
 			'transCSV:s' => \$opt{trans}, # CSV file containing the transactions
 			'trans:s' => \$opt{trans}, # datafile to save the classic transactions
@@ -122,6 +122,13 @@ sub printTransactions {
 	}
 }
 
+sub printTransactions {
+	my $trans = shift;
+    Transaction->printHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->print;
+	}
+}
 sub printMySQLTransactions {
 	my $trans = shift;
     Transaction->printMySQLHeader;
@@ -169,7 +176,12 @@ my $transactions = [];
 readClassicTransactions($transactions);
 #say Dumper $transactions;
 #printTransactions($transactions);
-printMySQLTransactions($transactions);
+if ($opt{quick}) {
+	printTransactions($transactions);
+}
+else {
+	printMySQLTransactions($transactions);
+}
 my $b = calcBalances($transactions);
 #printBalances($b);
 saveTransactions($transactions);

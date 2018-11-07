@@ -8,6 +8,11 @@ use Data::Dumper;
 use Storable qw(dclone);
 use vars qw(%opt);
 use Getopt::Long;
+use lib '.';
+use Account;
+use AccountsList;
+use Person;
+use Transaction;
 
 # Process a Bitstamp export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
 # Program works in several stages:
@@ -22,10 +27,10 @@ use Getopt::Long;
 
 # Commandline args
 GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
-			'g:s' => \$opt{g}, # 
-			'help' => \$opt{h}, # 
+			'g:s' => \$opt{g}, #
+			'help' => \$opt{h}, #
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'owner:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, #
 			'start:s' => \$opt{start}, # starting address
 			'trans:s' => \$opt{trans}, # name of transactions CSV file
 			'cablefile:s' => \$opt{cablefile}, # filename of CSV file with USD GBP rates
@@ -131,22 +136,16 @@ sub readBitstampTransactions {
 		    my ($rate, $rateccy) = split(/ /, $ratex);
 		    my ($fee, $feeccy) = split(/ /, $feex);
 		    my $rec = {};
-		    $rec->{type} = $type;
-		    $rec->{subtype} = $subtype;
+		    $rec->{tran_type} = $type;
+		    $rec->{tran_subtype} = $subtype;
 		    $rec->{dt} = $dt;
-		    $rec->{date} = $dt->dmy("/");
-		    $rec->{time} = $dt->hms();
-		    $rec->{account} = $account;
+		    $rec->{from_account} = $account;
 		    $rec->{amount} = $amount;
-		    $rec->{amountccy} = $amountccy;
-		    $rec->{value} = $value;
-		    $rec->{valueX} = $value;
-		    $rec->{valueccy} = $valueccy;
-		    $rec->{rate} = $rate;
-		    $rec->{rateccy} = $rateccy;
-		    $rec->{fee} = $fee;
-		    $rec->{feeccy} = $feeccy;
-			$rec->{owner} = $opt{owner};
+		    $rec->{currency} = $amountccy;
+	    	$rec->{value} = $value if $value;
+	    	$rec->{value_currency} = $valueccy if $valueccy;
+		    $rec->{rate} = $rate || 1;
+			$rec->{fee_currency} = $feeccy if $feeccy;
 			$rec->{hash} = "$opt{trans}-Line$.";
 		    if ($type eq "Deposit" || $type eq "Card Deposit") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
@@ -154,7 +153,7 @@ sub readBitstampTransactions {
 				$rec->{fromaccount} = "Bitstamp $amountccy Wallet";
 				$rec->{fromamount} = $amount;
 				$rec->{toamount} = $amount;
-
+				$rec->{from_fee} = $fee || 0;
 		    } elsif ($type eq "Withdrawal") {
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
 		        my $ts = $rec->{dt}->epoch();
@@ -172,14 +171,15 @@ sub readBitstampTransactions {
 				$rec->{hash} .=	"-$toaccount";
 				$rec->{fromamount} = $amount;
 				$rec->{toamount} = $amount;
-
-		    } elsif ($type eq "Market" and $subtype eq "Buy") {
+				$rec->{to_fee} = $fee || 0;
+			} elsif ($type eq "Market" and $subtype eq "Buy") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
 		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$valueccy"};
 				$rec->{toaccount} = "Bitstamp $amountccy Trading";
 				$rec->{fromaccount} = "Bitstamp USD Trading";
 				$rec->{fromamount} = $value;
 				$rec->{toamount} = $amount;
+				$rec->{from_fee} = $fee || 0;
 
 		    } elsif ($type eq "Market" and $subtype eq "Sell") {
 		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$valueccy"};
@@ -188,18 +188,42 @@ sub readBitstampTransactions {
 				$rec->{toaccount} = "Bitstamp USD Trading";
 				$rec->{toamount} = $value;
 				$rec->{fromamount} = $amount;
-
+				$rec->{to_fee} = $fee || 0;
 		    }
-		    $rec->{USDvalue} = 0;
-			$rec->{USDvalue} = $amount if $rec->{amountccy} eq 'USD';
-			$rec->{USDvalue} = $value if $rec->{valueccy} eq 'USD';
-			if ($cable->{$rec->{date}}) {
-				$rec->{GBPvalue} = $rec->{USDvalue} / $cable->{$rec->{date}};
+
+			$rec->{from_account} = AccountsList->account($rec->{fromaccount});
+			$rec->{to_account} = AccountsList->account($rec->{toaccount});
+
+			if (! defined $rec->{from_account}) {
+				say "From account undefined $rec->{fromaccount}";
+				next;
 			}
-			else {
-				die "No cable rate for $rec->{date}";
+			if (ref($rec->{from_account}) ne 'Account') {
+				say "From account is not a proper account $rec->{fromaccount}";
+				next;
 			}
-		    push @$data, $rec;
+			if (! defined $rec->{to_account}) {
+				say "To account undefined $rec->{toaccount}";
+				next;
+			}
+			if (ref($rec->{to_account}) ne 'Account') {
+				say "To account is not a proper account $rec->{toaccount}";
+				next;
+			}
+
+
+			my $T = Transaction->new($rec);
+
+		    #$rec->{USDvalue} = 0;
+			#$rec->{USDvalue} = $amount if $rec->{amountccy} eq 'USD';
+			#$rec->{USDvalue} = $value if $rec->{valueccy} eq 'USD';
+			#if ($cable->{$rec->{date}}) {
+		#		$rec->{GBPvalue} = $rec->{USDvalue} / $cable->{$rec->{date}};
+		#	}
+		#	else {
+		#		die "No cable rate for $rec->{date}";
+		#	}
+		    push @$data, $T;
 		    #print "$type,$subtype,$day-$month-$year,$hour:$min:00,$account,$amount,$amountccy,$value,$valueccy,$rate,$rateccy,$fee,$feeccy\n";
 		}
 	}
@@ -219,13 +243,13 @@ sub accumulateMktOrders {
 	        $acc->{count}++;
 		    push @$acc_data, $acc;
 	    }
-	    elsif ($rec->{type} eq 'Market' and 
-	            $rec->{type} eq $acc->{type} and 
-	            $rec->{subtype} eq $acc->{subtype} and 
-	            $rec->{account} eq $acc->{account} and 
-	            $rec->{amountccy} eq $acc->{amountccy} and 
-	            $rec->{valueccy} eq $acc->{valueccy} and 
-	            $rec->{date} eq $acc->{date} ) 
+	    elsif ($rec->{type} eq 'Market' and
+	            $rec->{type} eq $acc->{type} and
+	            $rec->{subtype} eq $acc->{subtype} and
+	            $rec->{account} eq $acc->{account} and
+	            $rec->{amountccy} eq $acc->{amountccy} and
+	            $rec->{valueccy} eq $acc->{valueccy} and
+	            $rec->{date} eq $acc->{date} )
 	    {
 	        # Add this record to the accumulator
 	        $acc->{date} = $rec->{date};
@@ -249,7 +273,7 @@ sub accumulateMktOrders {
 }
 
 # Split Market Buys and Sells into two records one for the DebitAccount and one for the CreditAccount (dual entry bookkeeping)
-sub splitMarketOrders { 
+sub splitMarketOrders {
 	my $data = shift;
 	my $split_data = [];
 #    print "Type,Subtype,Date,Time,Account,DebitAccount,CreditAccount,Amount,AmountCcy,Value,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Count\n";
@@ -260,7 +284,7 @@ sub splitMarketOrders {
     			$debit->{account} = $rec->{debitaccount};
     			$debit->{amount} = -$rec->{amount};
     			$debit->{amountccy} = $rec->{amountccy};
-    			
+
     			my $credit = dclone($rec);
     			$credit->{account} = $rec->{creditaccount};
     			$credit->{amount} = $rec->{value};
@@ -274,7 +298,7 @@ sub splitMarketOrders {
     			$debit->{account} = $rec->{debitaccount};
     			$debit->{amount} = -$rec->{value};
     			$debit->{amountccy} = $rec->{valueccy};
-    			
+
     			my $credit = dclone($rec);
     			$credit->{account} = $rec->{creditaccount};
     			$credit->{amount} = $rec->{amount};
@@ -322,12 +346,12 @@ sub accumulateFees {
 			$feeacc->{GBPvalue} = $feeacc->{USDvalue} / $cable->{$date};
 	        push @$fees, $feeacc;
 	    }
-        elsif ($feeacc->{count} > 0 and 
+        elsif ($feeacc->{count} > 0 and
         		$feeacc->{type} eq $rec->{type} and
 	       		$feeacc->{amountccy} eq $rec->{feeccy} and
         		$month eq $feeacc->{month}
-        		) 
-        	{ 
+        		)
+        	{
 		        	# accumulate this fee record
 			       	$feeacc->{amount} += $rec->{fee};
 			       	$feeacc->{USDvalue} += $rec->{fee};
@@ -338,40 +362,29 @@ sub accumulateFees {
 			$feeacc = {"count" => 0}; # reinitialise feeacc
 			redo;
 		}
-		       	
+
 	}
 	return $fees;
 }
 
-
-sub printTransactions {
+sub printMySQLTransactions {
 	my $trans = shift;
-    print "Type,Subtype,Date,Time,Account,Amount,AmountCcy,USDValue,GBPValue,Count\n";
-    for my $rec (@$trans) {
-       	print "$rec->{type},$rec->{subtype},$rec->{date},$rec->{time},$rec->{account},$rec->{amount},$rec->{amountccy},$rec->{USDvalue},$rec->{GBPvalue},$rec->{count}\n";
+    Transaction->printMySQLHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->printMySQL;
 	}
 }
 
-sub printMySQLTransactions {
+sub printTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,FromAccount,ToAccount,FromAmount,ToAmount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (@$trans) {
-    	my $dt = $rec->{dt};
-    	my $datetime = $dt->datetime(" ");
-    	$rec->{subtype} ||= 'NULL';
-    	$rec->{toaccount} ||= 'NULL';
-    	$rec->{valueX} ||= 'NULL';
-    	$rec->{valueccy} ||= 'NULL';
-    	$rec->{rate} ||= 'NULL';
-    	$rec->{rateccy} ||= 'NULL';
-    	$rec->{fee} ||= 'NULL';
-    	$rec->{feeccy} ||= 'NULL';
-    	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{fromaccount},$rec->{toaccount},$rec->{fromamount},$rec->{toamount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+    Transaction->printHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->print;
 	}
 }
 
 # Main program
+AccountsList->new();
 readFXrates();
 getWithdrawalsFromHistory();
 if (0) { # Processing for banana input
@@ -386,6 +399,3 @@ else { # Processing for MySQL input
 	my $m = readBitstampTransactions();
 	printMySQLTransactions($m);
 }
-
-  
-

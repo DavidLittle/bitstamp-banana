@@ -15,7 +15,7 @@ has Description	=> (is => 'ro', isa => 'Str');
 has AccountOwner	=> (is => 'ro', isa => 'Str');
 has Currency 	=> (is => 'ro', isa => 'Currency', required => 1,);
 has AccountType 	=> (is => 'ro', isa => 'Str');
-has Follow 	=> (is => 'ro', isa => 'Str');
+has Follow 	=> (is => 'rw', isa => 'Str');
 has Accountable 	=> (is => 'ro', isa => 'Str');
 has ShapeShift 	=> (is => 'ro', isa => 'Str');
 has Source 	=> (is => 'ro', isa => 'Str');
@@ -23,7 +23,6 @@ has BananaCode 	=> (is => 'ro', isa => 'Str');
 has Owner 	=> (is => 'rw', isa => 'Person');
 has AccountRefUnique 	=> (is => 'rw', isa => 'Str');
 has AccountRefShort	=> (is => 'rw', isa => 'Str');
-
 
 sub BUILD {
 	my ($self, $args) = @_;
@@ -33,6 +32,7 @@ sub BUILD {
     $t =~ s/-.*//;
     $self->AccountRef($t);
     $self->AccountRefShort(substr($args->{AccountRef},0,8));
+	$self->{Follow} = 'N' unless $self->{Follow} eq 'Y';
 }
 
 no Moose;

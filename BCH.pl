@@ -13,7 +13,9 @@ use vars qw(%opt);
 use Getopt::Long;
 use lib '.';
 use AccountsList;
+use Account;
 use Person;
+use Transaction;
 
 
 # Process Blockchain.info API
@@ -270,7 +272,7 @@ sub processShapeShiftTransactions {
 sub getTransactionsFromAccountsList {
 	my $transactions = [];
 	my $processed;
-	my $accounts = AccountsList->addresses('BCH');
+	my $accounts = AccountsList->accounts('BCH');
 	foreach my $address (sort keys %$accounts) {
 		my $owner = $accounts->{$address}{Owner};
 		my $follow = $accounts->{$address}{Follow} eq 'Y';
@@ -292,54 +294,77 @@ sub getTransactionsFromAccountsList {
 
 sub doSOmethingUseful {
 	my $hashes = shift;
-	my $transactions = [];
+	#my $transactions = [];
+	my $Transactions = [];
+	my $unknown_account = AccountsList->account("Unknown addresses");
+
 	foreach my $hash (@$hashes) {
 		if ($opt{trace} and $opt{trace} eq $hash) {
 			say "Tracing hash $hash";
 		}
 		my $data = getTx($hash);
 		next unless defined $data and ref($data) eq 'HASH';
+		$data->{tran_type} = "Transfer";
+		$data->{tran_subtype} = "BitcoinCash";
+		$data->{dt} = DateTime->from_epoch(epoch => $data->{block_time});
+		next unless $data->{dt} >= $BCHForkTime;
+		$data->{currency} = 'BCH';
+		$data->{amountccy} = 'BCH';
+		$data->{valueccy} = 'BCH'; # This is the Shapeshift withdraw coin type
+		$data->{feeccy} = 'BCH';
+		$data->{rate} = 1;
+		$data->{fee} = 0; # We are not interested in the fee for Unknown input addresses
+		$data->{to_fee} = 0;
+		$data->{from_fee} = 0;
 
 		my $ins = $data->{inputs};
 		my $outs = $data->{outputs};
 		foreach my $in (@$ins) {
+			die "Unexpected more than one input address" if scalar(@{$in->{prev_addresses}}) != 1;
 			my $addr = $in->{prev_addresses}[0];
 			if ($opt{trace} and $opt{trace} eq $addr) {
 				say "Tracing input address $addr";
 			}
+			$in->{address} = $addr;
+			$in->{from_account} = AccountsList->account($addr) || $unknown_account;
 			$data->{invalue} += $in->{prev_value};
-			my $owner = AccountsList->address($addr,'Owner');
+			my $owner = $in->{from_account}->Owner->name;
 			$in->{inowner} = $owner;
 			$data->{inownercount}{$owner}++;
-			my $follow = AccountsList->address($addr,'Follow');
+			my $follow = $in->{from_account}->Follow;
 			$in->{infollow} = $follow;
 			$data->{infollowcount}{$follow}++;
-			my $ss = AccountsList->address($addr,'ShapeShift');
+			my $ss = $in->{from_account}->ShapeShift;
 			$in->{ShapeShift} = $ss;
 			$data->{inshapeshiftcount}{$ss}++;
-			$in->{AccountRefUnique} = AccountsList->address($addr,'AccountRefUnique') || $addr;
+			$in->{AccountRefUnique} = $in->{from_account}->AccountRefUnique;
 			$data->{incount}++;
 		}
 		foreach my $out (@$outs) {
+			die "Unexpected more than one output address" if scalar(@{$out->{addresses}}) != 1;
 			my $addr = $out->{addresses}[0];
 			if ($opt{trace} and $opt{trace} eq $addr) {
 				say "Tracing output address $addr";
 			}
+			$out->{address} = $addr;
+			$out->{to_account} = AccountsList->account($addr) || $unknown_account;
+
+			my $ss = $out->{to_account}->ShapeShift;
 			$data->{outvalue} += $out->{value};
-			my $owner = AccountsList->address($addr,'Owner');
-			$data->{outknowncount}++ if $owner;
+			my $owner = $out->{to_account}->Owner->name;
+			$data->{outknowncount}++ if $owner ne 'Unknown';
 			$out->{owner} = $owner;
 			$data->{outownercount}{$owner}++;
-			my $follow = AccountsList->address($addr,'Follow');
+			my $follow = $out->{to_account}->Follow;
 			$out->{outfollow} = $follow;
 			$data->{outfollowcount}{$follow}++;
-			my $ss = AccountsList->address($addr,'ShapeShift');
 			$out->{ShapeShift} = $ss;
 			$data->{outshapeshiftcount}{$ss}++;
-			$out->{AccountRefUnique} = AccountsList->address($addr,'AccountRefUnique') || $addr;
+			$out->{AccountRefUnique} = $out->{to_account}{'AccountRefUnique'};
 			$data->{outcount}++;
 		}
-		if ($data->{outfollowcount}{'Y'} == 1 and $data->{inownercount}{''} == $data->{incount}) {
+		$data->{txnFee} = ($data->{invalue} - $data->{outvalue}) / 1e8;
+		if ($data->{outfollowcount}{'Y'} == 1 and $data->{inownercount}{'Unknown'} == $data->{incount}) {
 			# Many to one (or 2) many inputs can be collapsed into one dummy address
 			# This is a ShapeShift Output transaction. There could be many inputs and they are all ShapeShift internal addresses (unknown to AccountsList->)
 			# There will be one or two outputs. One is the AccountRef that ShapeShift has sent the funds to - it should be owned by one of us with Follow=Y
@@ -354,29 +379,26 @@ sub doSOmethingUseful {
 					last;
 				}
 			}
-			my $account = "Unknown addresses";
-			$account = "ShapeShiftInternalAddresses" if $out->{ShapeShift} eq 'Output'; # output ShapeShift withdrawal address, therefore input is SS internal
-			$account = "BitstampInternalAddresses" if $data->{inownercount}{'Bitstamp'} > 0; # We only need to identify 1 input in the Accounts file
-			$account = "itBitInternalAddresses" if $data->{inownercount}{'itBit'} > 0; # We only need to identify 1 input in the Accounts file
-			$account = "MtGoxWithdraw" if $data->{inownercount}{'MtGox'} > 0; # We only need to identify 1 input in the Accounts file
-			$account = "LocalBitcoins" if $data->{inownercount}{'LocalBitcoins'} > 0; # We only need to identify 1 input in the Accounts file
+			my $address = "Unknown addresses";
+			$address = "ShapeShiftInternalAddresses" if $out->{ShapeShift} eq 'Output'; # output ShapeShift withdrawal address, therefore input is SS internal
+			$address = "BitstampInternalAddresses" if $data->{inownercount}{'Bitstamp'} > 0; # We only need to identify 1 input in the Accounts file
+			$address = "itBitInternalAddresses" if $data->{inownercount}{'itBit'} > 0; # We only need to identify 1 input in the Accounts file
+			$address = "MtGoxWithdraw" if $data->{inownercount}{'MtGox'} > 0; # We only need to identify 1 input in the Accounts file
+			$address = "LocalBitcoins" if $data->{inownercount}{'LocalBitcoins'} > 0; # We only need to identify 1 input in the Accounts file
 
-			$data->{type} = "Transfer";
-			$data->{subtype} = "BitcoinCash";
-			$data->{account} = $account;
+			$data->{address} = $address;
 			$data->{toaccount} = $out->{AccountRefUnique}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
 			$data->{amount} = $out->{value} / 1e8; # This is the amout of BCH credited from the ShapeShift transaction
-			$data->{amountccy} = 'BCH';
-			$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
-			$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
-			$data->{rate} = 'NULL';
-			$data->{rateccy} = 'NULL';
-			$data->{fee} = 'NULL'; # We are not interested in the BitcoinCash mining fee, our fee is the spread from ShapeShift
-			$data->{feeccy} = 'NULL';
-			$data->{owner} = $out->{owner};
+			$data->{fee} = 0; # We are not interested in the fee for Unknown input addresses
 			$data->{hash} = $data->{hash}; # This is the transaction hash for the overall transaction. Populated by btc.com
-			$data->{dt} = DateTime->from_epoch(epoch => $data->{block_time});
-			push @$transactions, $data;
+			#push @$transactions, $data;
+
+			$data->{from_account} = AccountsList->account($data->{address});
+			$data->{to_account} = $out->{to_account};
+
+			next if !_check_consistency($data, "Type 1");
+			my $T = Transaction->new($data);
+			push @$Transactions, $T;
 		}
 		elsif ($data->{infollowcount}{'Y'} == $data->{incount} and $data->{outknowncount} == 1 and $data->{outcount} == 1 ) {
 			# Many to one
@@ -395,26 +417,28 @@ sub doSOmethingUseful {
 			}
 			my $index = 0;
 			foreach my $in (@$ins) {
-				my $account = $in->{AccountRefUnique};
+				my $address = $in->{AccountRefUnique};
 
-				$data->{type} = "Transfer";
-				$data->{subtype} = "BitcoinCash";
-				$data->{account} = $account;
-				$data->{toaccount} = $out->{AccountRefUnique}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
+				$data->{address} = $address;
+				$data->{toaddress} = $out->{AccountRefUnique}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
 				$data->{amount} = $in->{prev_value} / 1e8; # This is the amout of BCH credited from the ShapeShift transaction
-				$data->{amountccy} = 'BCH';
-				$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
-				$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
-				$data->{rate} = 'NULL';
-				$data->{rateccy} = 'NULL';
-				$data->{fee} = 'NULL'; # We are not interested in the BitcoinCash mining fee, our fee is the spread from ShapeShift
-				$data->{feeccy} = 'NULL';
-				$data->{owner} = $in->{owner};
+				$data->{fee} = 0; #Needed because doesnt reset on next pass through the loop
+				$data->{fee} = $data->{txnFee} if $index == 0; # Stick fee on first one
+				# Fee goes onto the to_account side because the amounts are are from ins
+				# therefore the credited amount will be total of amounts - total fees
+				# since this is a many-to-one the full fee can come off any of these Transactions
+				# so we pick the first one.
+				$data->{to_fee} = 0; #Needed because doesnt reset on next pass through the loop
+				$data->{to_fee} = $data->{txnFee} if $index == 0; # Stick fee on first one
 				$data->{hash} = "$hash-$index"; # This is the transaction hash for the overall transaction.258
-				$data->{dt} = DateTime->from_epoch(epoch => $data->{block_time});
 
-				my $sub = dclone($data);
-				push @$transactions, $sub;
+				$data->{from_account} = $in->{from_account};
+				$data->{to_account} = $out->{to_account};
+
+				next if !_check_consistency($data, "Type 2");
+				my $T = Transaction->new($data);
+				push @$Transactions, $T;
+
 				$index++;
 
 			}
@@ -437,26 +461,24 @@ sub doSOmethingUseful {
 			}
 			my $index = 0;
 			foreach my $out (@$outs) {
-				my $account = $out->{AccountRefUnique};
+				my $address = $out->{AccountRefUnique};
 
-				$data->{type} = "Transfer";
-				$data->{subtype} = "BitcoinCash";
-				$data->{account} = $in->{AccountRefUnique};
-				$data->{toaccount} = $account;
+				$data->{address} = $in->{AccountRefUnique};
+				$data->{toaddress} = $address;
 				$data->{amount} = $out->{value} / 1e8; # This is the amout of BCH going to this output
-				$data->{amountccy} = 'BCH';
-				$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
-				$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
-				$data->{rate} = 'NULL';
-				$data->{rateccy} = 'NULL';
-				$data->{fee} = 'NULL'; # We are not interested in the BitcoinCash mining fee
-				$data->{feeccy} = 'NULL';
-				$data->{owner} = $in->{inowner};
+				$data->{from_fee} = 0; #Needed because doesnt reset on next pass through the loop
+				# Fee needs to be on the from_account side because we are using values from outs
+				# so the ins balance needs to be reduced by amounts plus fee to have correct balance
+				$data->{from_fee} = $data->{txnFee} if $index == 0; # Stick fee on first one
 				$data->{hash} = "$hash-$index"; # This is the transaction hash hyphen index
-				$data->{dt} = DateTime->from_epoch(epoch => $data->{block_time});
 
-				my $sub = dclone($data);
-				push @$transactions, $sub;
+				$data->{from_account} = $in->{from_account};
+				$data->{to_account} = $out->{to_account};
+
+				next if !_check_consistency($data, "Type 3");
+				my $T = Transaction->new($data);
+				push @$Transactions, $T;
+
 				$index++;
 
 			}
@@ -471,52 +493,39 @@ sub doSOmethingUseful {
 
 			my $in; # There is only one input address - let's find it
 			my $index = 0;
-			my $journal = "JournalAccount";
+			my $journal = AccountsList->account("JournalAccount");
 			foreach my $in (@$ins) {
-				my $account = $in->{AccountRefUnique};
+				my $address = $in->{AccountRefUnique};
 
-				$data->{type} = "Transfer";
-				$data->{subtype} = "BitcoinCash";
-				$data->{account} = $account;
-				$data->{toaccount} = $journal; #$out->{addr};
 				$data->{amount} = $in->{prev_value} / 1e8; # This is the amout of BCH credited from the ShapeShift transaction
-				$data->{amountccy} = 'BCH';
-				$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
-				$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
-				$data->{rate} = 'NULL';
-				$data->{rateccy} = 'NULL';
-				$data->{fee} = 'NULL'; # We are not interested in the BitcoinCash mining fee, our fee is the spread from ShapeShift
-				$data->{feeccy} = 'NULL';
+				$data->{fee} = 0; #Needed because doesnt reset on next pass through the loop
+				# No fee processing required because ins use in amounts and outs use out amounts
 				$data->{owner} = $in->{owner};
 				$data->{hash} = "$hash-$index"; # This is the transaction hash for the overall transaction.258
-				$data->{dt} = DateTime->from_epoch(epoch => $data->{block_time});
 
-				my $sub = dclone($data);
-				push @$transactions, $sub;
+				$data->{from_account} = $in->{from_account};
+				$data->{to_account} = $journal;
+
+				next if !_check_consistency($data, "Type 4a");
+				my $T = Transaction->new($data);
+				push @$Transactions, $T;
 				$index++;
 
 			}
 			foreach my $out (@$outs) {
-				my $account = $out->{addresses}[0];
+				my $address = $out->{addresses}[0];
 
-				$data->{type} = "Transfer";
-				$data->{subtype} = "BitcoinCash";
-				$data->{account} = $journal; #$in->{AccountRefUnique};
-				$data->{toaccount} = $account;
 				$data->{amount} = $out->{value} / 1e8; # This is the amount of BCH going to this output
-				$data->{amountccy} = 'BCH';
-				$data->{valueX} = 'NULL'; # This is the Shapeshift withdraw amount
-				$data->{valueccy} = 'NULL'; # This is the Shapeshift withdraw coin type
-				$data->{rate} = 'NULL';
-				$data->{rateccy} = 'NULL';
-				$data->{fee} = 'NULL'; # We are not interested in the BitcoinCash mining fee
-				$data->{feeccy} = 'NULL';
-				$data->{owner} = $in->{inowner};
+				# No fee processing required because ins use in amounts and outs use out amounts
+				$data->{fee} = 0; # No fee on the outs
 				$data->{hash} = "$hash-$index"; # This is the transaction hash hyphen index
-				$data->{dt} = DateTime->from_epoch(epoch => $data->{block_time});
 
-				my $sub = dclone($data);
-				push @$transactions, $sub;
+				$data->{from_account} = $journal;
+				$data->{to_account} = $out->{to_account};
+
+				next if !_check_consistency($data, "Type 4b");
+				my $T = Transaction->new($data);
+				push @$Transactions, $T;
 				$index++;
 
 			}
@@ -528,7 +537,7 @@ sub doSOmethingUseful {
 		}
 
 	}
-	return $transactions;
+	return $Transactions;
 }
 
 # Example transaction ce5a3077dded32db95db46724ecd79eec4d9226ef4505cd9e0298307bc89022f
@@ -554,34 +563,64 @@ sub doSOmethingUseful {
 #		One or more inputs from  eg from Jax Wallet all with Follow=Y all known
 #		normally 2 outputs - one change and one destination.
 
+sub _check_consistency {
+	my ($data, $str) = @_;
+	#say $data->{toaccount} if !defined $data->{to_account};
+	#say $data->{fromaccount} if !defined $data->{from_account};
+	if (! defined $data->{from_account}) {
+		say "$str From account undefined $data->{address}";
+		return 0;
+	}
+	if (ref($data->{from_account}) ne 'Account') {
+		say "$str From account is not a proper account $data->{address}";
+		return 0;
+	}
+	if (! defined $data->{to_account}) {
+		say "$str To account undefined $data->{toaddress}";
+		return 0;
+	}
+	if (ref($data->{to_account}) ne 'Account') {
+		say "$str To account is not a proper account $data->{toaddress}";
+		return 0;
+	}
+	return 1;
+}
 
 
-sub printMySQLTransactions {
+sub xprintMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
+    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,FromFee,ToFee,FeeCcy,Hash\n";
     for my $rec (sort {$a->{dt} <=> $b->{dt}} @$trans) {
     	my $dt = $rec->{dt};
-    	next if $dt < $BCHForkTime; # Don't print BCH transactions before the fork
+    	#next if $dt < $BCHForkTime; # Don't print BCH transactions before the fork
     	my $datetime = $dt->datetime(" ");
     	$rec->{subtype} ||= 'NULL';
     	$rec->{toaccount} ||= 'NULL';
     	$rec->{valueX} ||= 'NULL';
     	$rec->{valueccy} ||= 'NULL';
     	$rec->{rate} ||= 'NULL';
-    	$rec->{rateccy} ||= 'NULL';
     	$rec->{fee} ||= 'NULL';
     	$rec->{feeccy} ||= 'NULL';
     	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+		print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{from_fee},$rec->{to_fee},$rec->{feeccy},$rec->{hash}\n";
+#OLD		print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},NULL,NULL,$rec->{fee},NULL,NULL,$rec->{owner}{name},$rec->{hash}\n";
 	}
 }
 
-sub printTransactions {
+sub printMySQLTransactions {
+	my $trans = shift;
+    Transaction->printMySQLHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->printMySQL;
+	}
+}
+
+sub xprintTransactions {
 	my ($transactions,$address) = @_;
 	my $processed;
 	foreach my $t (sort {$a->{dt} <=> $b->{dt}} @$transactions) {
-		next if $processed->{$t->{hash}};
-		$processed->{$t->{hash}} = 1;
+		#next if $processed->{$t->{hash}};
+		#$processed->{$t->{hash}} = 1;
     	my $datetime = $t->{dt}->datetime(" ");
 		next if $address and $t->{from} ne $address and $t->{to} ne $address;
 		my $fromAccount = AccountsList->address($t->{account});
@@ -589,7 +628,14 @@ sub printTransactions {
 		my $fromS = substr($t->{account},0,8);
 		my $toS = substr($t->{toaccount},0,8);
 		my $shorthash = substr($t->{hash},0,6) . ".." . substr($t->{hash},-6,6);
-		print "$datetime $fromS $fromAccount->{Owner} $fromAccount->{AccountName} $t->{'amount'} $t->{amountccy} $toAccount->{AccountName} $toAccount->{Owner} $toS $shorthash\n";
+		print "$datetime $fromS $fromAccount->{Owner}{name} $fromAccount->{AccountName} $t->{'amount'} $t->{amountccy} $toAccount->{AccountName} $toAccount->{Owner}{name} $toS $shorthash\n";
+	}
+}
+sub printTransactions {
+	my $trans = shift;
+    Transaction->printHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->print;
 	}
 }
 

@@ -4,7 +4,7 @@ use English;
 use strict;
 use Carp;
 use DateTime;
-# https://github.com/DavidLittle/bitstamp-banana.gitperl Ac	
+# https://github.com/DavidLittle/bitstamp-banana.gitperl Ac
 use Text::CSV_XS qw(csv);
 use Data::Dumper;
 use Storable qw(dclone store retrieve);
@@ -18,17 +18,17 @@ use Account;
 use Person;
 use AccountsList;
 
-# Process Blockchain.info API 
+# Process Blockchain.info API
 
 # Commandline args
 GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
 			'accountsList:s' => \$opt{accountsList}, # AccountsList file
 			'desc:s' => \$opt{desc}, # AddressDescriptions file
-			'g:s' => \$opt{g}, # 
-			'h' => \$opt{h}, # 
+			'g:s' => \$opt{g}, #
+			'h' => \$opt{h}, #
 			'key:s' => \$opt{key}, # API key to access etherscan.io
 			'newal:s' => \$opt{newal}, # Name of new AddressList file to write
-			'owner:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, #
 			'start:s' => \$opt{start}, # starting address
 			'trace:s' => \$opt{trace}, # trace hash or address
 			'trans:s' => \$opt{trans}, # Blockchain transactions datafile
@@ -52,7 +52,7 @@ my $addrurl = "${url}rawaddr/";
 
 
 #accountList - load an AccountsList file extracted from mysql database
-sub accountsList { 
+sub accountsList {
 	my ($address, $field) = @_;
 	$field ||= 'Desc'; #  default is to return the description for the given address
 	state $desc2 = undef; # Descriptions keyed on address
@@ -83,7 +83,7 @@ sub printAL {
 	my @rows;
 
 	my $csv = Text::CSV_XS->new ({ binary => 0, auto_diag => 1, strict => 1, });
- 
+
 	push @rows, [split(",", "idAccounts,AccountRef,AccountName,Description,AccountOwner,Currency,AccountType,BananaCode,Source,SourceRef,Follow,ShapeShift")];
 	foreach my $addr (sort { $als->{$a}{idAccounts} <=> $als->{$b}{idAccounts}} keys %$als) {
 		my $al = $als->{$addr};
@@ -250,7 +250,7 @@ sub interactiveUpdate {
 			$s = $olds if $resp =~ /S/;
 			$f = "Y" if $resp =~ /Y/i;
 			$f = "N" if $resp =~ /N/i;
-			last if $resp =~ /b/i;	
+			last if $resp =~ /b/i;
 		}
 		printALRowInALFormat($als->{$addr});
 		$als->{$addr}{Follow} = $f;
@@ -267,7 +267,7 @@ sub interactiveUpdate {
 }
 
 
-sub updateFromFile { 
+sub updateFromFile {
 	my ($accountsList, $filename, $fields) = @_;
 	my $upd  = csv( in => $filename, headers => "auto", filter => {1 => sub {length > 0} } );
 	foreach my $rec (@$upd) {
@@ -280,11 +280,43 @@ sub updateFromFile {
 	}
 }
 
+sub test_account_consistency {
+	my $als = shift;
+	foreach my $acc (keys %$als) {
+		my $a = $als->{$acc};
+		my $id = $a->{idAccounts};
+		#say "# Check Follow set to Y or N";
+		my $f = $a->{Follow};
+		warn "$acc Follow = $f" unless $f eq 'Y' or $f eq 'N';
+
+		#say "# Test All ShapeShift inputs are owned by ShapeShift";
+		my $o = $a->{Owner}->name;
+		my $ss = $a->{ShapeShift};
+		warn "$id,$acc Owner $o ShapeShift $ss" if $ss eq 'Input' and $o ne 'ShapeShift';
+
+		#say "# Test All ShapeShift outputs are NOT owned by ShapeShift";
+		my $o = $a->{Owner}->name;
+		my $ss = $a->{ShapeShift};
+		warn "$id,$acc Owner $o ShapeShift $ss" if $ss eq 'Output' and $o eq 'ShapeShift';
+
+		#say "# Check -bch and -etc properly unique";
+		if ($a->AccountRef ne $a->AccountRefUnique) {
+			my $pair = $als->{$a->{AccountRef}};
+			if ($a->AccountRef eq $pair->AccountRef and $a->{Currency} eq $pair->{Currency}) {
+				warn "Duplicate entries: $a->{idAccounts} $a->{AccountRef} and $pair->{idAccounts} $pair->{AccountRef}";
+			}
+		}
+
+	}
+}
+
+
+
 # Main program
-my $al = AccountsList->new();
+my $al = AccountsList->new()->accounts;
+test_account_consistency($al);
 #compareOldNew($ad, $al);
 #updateALFromAD($ad, $al);
 #my $result = interactiveUpdate($ad, $al);
 #updateFromFile($al,"/home/david/Downloads/JaxxAddresses.csv",["AccountOwner","Currency","AccountName","Description"]);
 #printAL($al);
-

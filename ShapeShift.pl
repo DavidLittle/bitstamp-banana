@@ -14,6 +14,9 @@ use Getopt::Long;
 use Data::Dumper;
 use lib '.';
 use AccountsList;
+use Account;
+use Person;
+use Transaction;
 
 
 # Process a shapeshift.io address to confirm exchanges transactions
@@ -24,14 +27,14 @@ use AccountsList;
 # Nevertheless, when it works it is evidence that the address really is a SHapeShift deposit address ie an address for which SHapeShift has the private key.
 
 # Commandline args
-GetOptions( 
+GetOptions(
 			'accounts!' => \$opt{accounts}, # Get SS transactions by looking at every entry in the Accounts (AddressDesc) file
 			'datadir:s' => \$opt{datadir}, # Data Directory address
 			'desc:s' => \$opt{desc},
-			'g:s' => \$opt{g}, # 
-			'help' => \$opt{h}, # 
+			'g:s' => \$opt{g}, #
+			'help' => \$opt{h}, #
 			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'owner:s' => \$opt{owner}, # 
+			'owner:s' => \$opt{owner}, #
 			'start:s' => \$opt{start}, # starting address
 			'trans:s' => \$opt{trans}, # filename to store transactions
 			'trace:s' => \$opt{trace}, # trace a given address or ShapeShift status (prints Data::Dumper)
@@ -67,11 +70,11 @@ my $baseurl = "https://shapeshift.io/";
 sub getTxStat {
 	my $address = shift;
 	my $action = 'txStat';
-	my $cachefile = "$opt{datadir}/ShapeShift$action$address.json"; 
+	my $cachefile = "$opt{datadir}/ShapeShift$action$address.json";
 	my $result = [];
 	if (-e $cachefile) {
 		$result = retrieve($cachefile);
-		
+
 		return $result;
 	}
 	my $url = "$baseurl$action/$address";
@@ -83,18 +86,16 @@ sub getTxStat {
 	my $content = $response->content;
 	if ($content) {
 		my $data = parse_json($content);
+		# Following line is a dirty hack where SS API has returned the wrong hash
 		$data->{transaction} = '0xbd98b2d4ee9ddd6b235781b2220fa782ca76b8baa3f6963ded05b4fc3c9e9630' if $data->{transaction} eq '0x01973de82f9da359738d364a64de7aa9a5022c9bc314fbaefce42374ea61d1a0';
 		store($data, $cachefile);
 		return $data;
 	}
-	return 0; # What should we return here??	
+	return 0; # What should we return here??
 }
 
 sub getTransactionDate {
 	my $data = shift;
-	if ($data->{incomingType} eq "ETH") {
-	
-	}
 	return DateTime->now->truncate( to => 'day' ); # dirty hack to make extracts created on the same day comparable
 }
 
@@ -108,7 +109,7 @@ sub getAddressesFromFiles {
 		$count{total}++;
 		my $t = retrieve($f);
 		next unless $t;
-		$count{"Status $t->{status}"}++; 
+		$count{"Status $t->{status}"}++;
 		if ($t->{status} eq 'error') {
 			next;
 		}
@@ -126,25 +127,29 @@ sub getAddressesFromFiles {
 
 sub getTransactionsFromAccountsList {
 	my $accounts = AccountsList->addresses();
-	my $transactions = [];
+	my $Transactions = [];
 	my $processed;
 	foreach my $address (sort keys %$accounts) {
 		if (length($address) > 20 or $accounts->{$address}{Owner} =~ /ShapeShift/) {
 			my $data = getTxStat($address);
-			$data->{type} = "Exchange";
-			$data->{subtype} = "ShapeShift";
-			$data->{account} = $data->{address}; # This is the Shapeshift deposit address - incoming to ShapeShift
-			$data->{toaccount} = $data->{withdraw}; # This is the Shapeshift withdraw address - outgoing from ShapeShift
+			next unless $data->{status} eq 'complete';
+			if ($data->{outgoingType} eq 'ETH' and $data->{withdraw} !~ /^0x/) {
+				$data->{withdraw} = "0x$data->{withdraw}";
+			}
+			$data->{tran_type} = "Exchange";
+			$data->{tran_subtype} = "ShapeShift";
+			$data->{from_account} = AccountsList->account($data->{address});
+			$data->{to_account} = AccountsList->account($data->{withdraw});
 			$data->{amount} = $data->{incomingCoin}; # This is the Shapeshift deposit amount
-			$data->{amountccy} = $data->{incomingType}; # This is the Shapeshift deposit coin type
-			$data->{valueX} = $data->{outgoingCoin}; # This is the Shapeshift withdraw amount
-			$data->{valueccy} = $data->{outgoingType}; # This is the Shapeshift withdraw coin type
-			$data->{rate} = 'NULL';
-			$data->{rateccy} = 'NULL';
-			$data->{fee} = 'NULL';
-			$data->{feeccy} = 'NULL';
-			$data->{owner} = AccountsList->address($data->{toaccount}, 'Owner');
+			$data->{currency} = $data->{incomingType}; # This is the Shapeshift deposit coin type
+			$data->{value} = $data->{outgoingCoin}; # This is the Shapeshift withdraw amount
+			$data->{value_currency} = $data->{outgoingType}; # This is the Shapeshift withdraw coin type
+			$data->{rate} = $data->{value} / $data->{amount};
+			$data->{fee} = 0;
+			$data->{fee_currency} = $data->{currency};
+			#$data->{owner} = AccountsList->address($data->{toaccount}, 'Owner');
 			$data->{hash} = "$data->{transaction}-SS"; # This is the transaction hash for the outgoing transaction SS to identify it as ShapeShift and keep hashes unique
+
 			if ($opt{trace} and $opt{trace} eq $data->{address}) {
 				say "traceing address $opt{trace}";
 				print Dumper $data;
@@ -174,8 +179,33 @@ sub getTransactionsFromAccountsList {
 #				say "$address,ShapeShift,ShapeShift error,N";
 			}
 			elsif ($data->{status} eq 'complete') {
-#				say "$address,ShapeShift,ShapeShift $data->{incomingCoin} $data->{incomingType} to $data->{outgoingCoin} $data->{outgoingType} $data->{transaction}";
-				push(@$transactions, $data);
+				if (!defined $data->{from_account} or !defined $data->{to_account}) {
+					say "$address,ShapeShift,ShapeShift $data->{incomingCoin} $data->{incomingType} to $data->{outgoingCoin} $data->{outgoingType} $data->{withdraw} $data->{transaction}";
+					say "Missing From account: $data->{address}" if !defined $data->{from_account};
+					say "Missing To account: $data->{withdraw}" if !defined $data->{to_account};
+					say "Skipping this transaction";
+					next;
+				}
+				if ($data->{from_account}->ShapeShift ne 'Input') {
+					say "$data->{from_account}{AccountRefUnique} should be set to Input";
+				}
+				if ($data->{from_account}->Owner->name ne 'ShapeShift') {
+					say "$data->{from_account}{AccountRefUnique} deposit address should be owned by ShapeShift " . $data->{from_account}->Owner->name;
+				}
+				if ($data->{from_account}->Currency ne $data->{incomingType}) {
+					say "$data->{from_account}{AccountRefUnique} Currency mismatch incomingType is $data->{incomingType}";
+				}
+				if ($data->{to_account}->ShapeShift ne 'Output') {
+					say "$data->{to_account}{AccountRefUnique} outgoingType is $data->{outgoingType} should be set to Output and Follow ";
+				}
+				if ($data->{to_account}->Owner->name eq 'ShapeShift') {
+					say "$data->{to_account}{AccountRefUnique} withdraw address should NOT be owned by ShapeShift " . $data->{to_account}->Owner->name;
+				}
+				if ($data->{to_account}->Currency ne $data->{outgoingType}) {
+					say "$data->{to_account}{AccountRefUnique} Currency mismatch outgoingType is $data->{outgoingType}";
+				}
+				my $T = Transaction->new($data);
+				push(@$Transactions, $T);
 			}
 			elsif ($data->{status} eq 'failed') {
 #				say "$address,ShapeShift,ShapeShift ETH deposit failed,N";
@@ -189,7 +219,7 @@ sub getTransactionsFromAccountsList {
 			}
 		}
 	}
-	return $transactions;
+	return $Transactions;
 }
 
 sub saveTransactions {
@@ -209,29 +239,16 @@ sub printOutputData {
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (@$trans) {
-    	my $dt = $rec->{dt};
-    	my $datetime = $dt->datetime(" ");
-    	$rec->{subtype} ||= 'NULL';
-    	$rec->{toaccount} ||= 'NULL';
-    	$rec->{valueX} ||= 'NULL';
-    	$rec->{valueccy} ||= 'NULL';
-    	$rec->{rate} ||= 'NULL';
-    	$rec->{rateccy} ||= 'NULL';
-    	$rec->{fee} ||= 'NULL';
-    	$rec->{feeccy} ||= 'NULL';
-    	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+    Transaction->printMySQLHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->printMySQL;
 	}
 }
 
-
 # Main Program
 
-#my $d = addressDesc();
 AccountsList->new();
-AccountsList->backCompatible();
+#AccountsList->backCompatible();
 
 if ($opt{start}) { # for interactive use to check a single address
 	my $x = getTxStat($opt{start});
@@ -260,5 +277,3 @@ else {
 #		say "Found it 0x056a157691922ec30ee833c51446515e0960e167";
 #	}
 #}
-
-

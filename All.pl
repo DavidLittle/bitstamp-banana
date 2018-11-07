@@ -10,28 +10,28 @@ use Storable qw(dclone store retrieve);
 use JSON::Parse qw(parse_json json_file_to_perl);
 use LWP::Simple;
 use vars qw(%opt);
+use vars qw(%counts);
 use Getopt::Long;
+use lib '.';
+use Account;
+use Transaction;
+use Person;
 
 # Commandline args
-GetOptions('d:s' => \$opt{datadir}, # Data Directory address
-			'g:s' => \$opt{g}, # 
-			'h' => \$opt{h}, # 
-			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'o:s' => \$opt{owner}, # 
-			'start:s' => \$opt{start}, # starting address
-
-			'bitstamp:s' => \$opt{bitstamp}, # starting address
-			'classic:s' => \$opt{classic}, # starting address
-			'ether:s' => \$opt{ether}, # starting address
-			'shapeshift:s' => \$opt{shapeshift}, # starting address
-			'trace:s' => \$opt{trace},
-);
+GetOptions(
+	'counts!' => \$opt{counts},
+	'datadir:s' => \$opt{datadir}, # Data Directory address
+	'quick!' => \$opt{quick}, #
+	'start:s' => \$opt{start}, # starting address
+	'trace:s' => \$opt{trace},
+)
+#	'bitstamp:s' => \$opt{bitstamp}, # starting address
+#	'classic:s' => \$opt{classic}, # starting address
+#	'ether:s' => \$opt{ether}, # starting address
+#	'shapeshift:s' => \$opt{shapeshift}, # starting address
+;
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "ACK.csv"; #"AddressDescriptions.dat";
-$opt{key} ||= ''; # from etherscan.io
-$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
-
 $opt{bitstamp} ||= "BitstampTransactions.dat";
 $opt{bitcoin} ||= "BlockchainTransactions.dat";
 $opt{bitcoincash} ||= "BCHTransactions.dat";
@@ -42,204 +42,137 @@ $opt{shapeshift} ||= "ShapeshiftTransactions.dat";
 # Global variables
 
 #Shapeshift transactions have minimal data. Therefore enrich with data from the same transaction captured elsewhere
-sub enrichShapeShiftTransactions { 
-	my ($st,$all) = @_;
+sub enrichShapeShiftTransactions {
+	my ($ss_transactions,$blockchain_transactions) = @_;
 	my (%hdict, %adict);
 	my $enriched;
-	my %count;
-	
+
 	# create dictionary of transactions keyed on txhash
-	foreach my $a (@$all) {
-		if (ref($a) ne 'HASH') {
-			say "Oops";
+	foreach my $t (@$blockchain_transactions) {
+		if (ref($t) ne 'Transaction' ) {
+			say 'Oops unexpected type for $t: ' . ref($t);
 			next;
 		}
-		if ($opt{trace} and $a->{account} eq $opt{trace}) { say "Found from address in transactions $a->{account}"};
-		if ($opt{trace} and $a->{toaccount} eq $opt{trace}) { say "Found to address in transactions $a->{toaccount}"};
-		if (! defined $a->{toaccount} or !defined $a->{toaccount}) {
-			say "Oops no account or toaccount";
+		if ($opt{trace} and $t->{from_account}{AccountRef} eq $opt{trace}) {
+			say "Found from address in transactions $t->{from_account}{AccountRef}";
+		};
+		if ($opt{trace} and $t->{to_account}{AccountRef} eq $opt{trace}) {
+			say "Found to address in transactions $t->{to_account}{AccountRef}";
+		};
+		if (! defined $t->{from_account} or !defined $t->{to_account}) {
+			say "Oops no from_account or to_account";
 		}
-		# BTC and BCH transactions can be split into multiple sub transactions - they have hash field set to hash-index
-		# We can therefore we need to remove the suffix.
-		my $hash = $a->{hash};
-		$hash =~ s/-[0-9]*$//;
-		if ($opt{trace} and $hash eq $opt{trace}) { say "Found hash in transactions $hash"};
-		$hdict{$hash} = $a;
-		$adict{"to $a->{toaccount} $a->{amount}"} = $a;
-		$adict{"from $a->{account} $a->{amount}"} = $a;
-		$count{Transactions}++;
-		$count{"Transactions in ccy $a->{ccy}"}++;
-		$count{"Transactions in amountccy $a->{amountccy}"}++;
+		# BTC and BCH transactions can be split into multiple sub transactions
+		# they have hash field set to hash-index. We want to find Transactions
+		# by looking up the transaction hash returned from SS API. therefore
+		# we strip the suffix. It doesn't matter that we only get one of the
+		# sub-transactions
+		my $hash = $t->{hash};
+		$hash =~ s/-.*//;
+		if ($opt{trace} and $hash =~ /$opt{trace}/) {
+			say "Found hash in transactions $hash $t->{currency}";
+		};
+		$hdict{$hash} = $t; # Used to lookup the withdraw side of the SS transaction
+		# For Type2 BTC and BCH transactions we need the output amount stored in the note field
+		my $amount = $t->{amount};
+		if ($t->{note} =~ /Type2.Outvalue ([0-9.]+)/) {
+			$amount = $1;
+		}
+		$adict{"$t->{to_account}{AccountRef} $amount"} = $t;
+		#$adict{"from $t->{from_account}{AccountRef} $t->{amount}"} = $t;
+		$counts{Transactions}++;
+		$counts{"Transactions in currency $t->{currency}"}++;
+		$counts{"adict keys"} = scalar(keys %adict);
+		$counts{"hdict keys"} = scalar(keys %hdict);
 	}
 #	print Dumper $adict{'0x85a9962fbc35549afec891c285b3fe057ec334cc'};
-	
+
 	# enrich shapeshit transactions from the dict
-	foreach my $t (@$st) {
-		if ($opt{trace} and $t->{address} eq $opt{trace}) {
-			say "Found receive address in SS $t->{address} withdraw hash:$t->{transaction}"
+	foreach my $ss_t (@$ss_transactions) {
+		if ($opt{trace} and $ss_t->{from_account}{AccountRef} =~ /$opt{trace}/) {
+			say "Found receive address in SS $ss_t->{from_account}{AccountRef} withdraw hash:$ss_t->{hash}"
 		};
-		if ($opt{trace} and $t->{withdraw} eq $opt{trace}) {
-			say "Found withdraw address in SS $t->{withdraw} withdraw hash:$t->{transaction}"
+		if ($opt{trace} and $ss_t->{to_account}{AccountRef} =~ /$opt{trace}/) {
+			say "Found withdraw address in SS $ss_t->{to_account}{AccountRef} withdraw hash:$ss_t->{hash}"
 		};
-		$count{all}++;
-		$count{"Status $t->{status}"}++; 
-		if ($t->{status} eq 'error') {
-			next;
+		$counts{all}++;
+		$counts{"$ss_t->{currency} to $ss_t->{value_currency}"}++;
+
+		# Now find the incoming deposit transaction and outgoing withdraw transactions
+
+		my $a = $ss_t->{from_account}{AccountRef}; #ss deposit address
+		$ss_t->{deposit_t} = $adict{"$a $ss_t->{amount}"};
+		if (defined $ss_t->{deposit_t}) {
+			$counts{"deposit address resolved"}++;
 		}
-		$count{"$t->{incomingType} to $t->{outgoingType}"}++; 
-		if ($t->{outgoingType} eq 'BTC') {
-#			next;
+
+		my $h = ($ss_t->{hash});
+		$h =~ s/-.*$//; # Strip off -SS-.*
+		#if ($h and $ss_t->{outgoingType} =~ /ET[CH]/) {
+		#	$h = "0x$h";
+		#	$h =~ s/0x0x/0x/;
+		#}
+		if ($opt{trace} and $h =~ /$opt{trace}/) { say "Found hash in ss data $h"};
+		$ss_t->{withdraw_t} = $hdict{$h};
+		if (defined $ss_t->{withdraw_t}) {
+			$counts{"withdraw address resolved"}++;
 		}
-		
-		my $h = ($t->{transaction});
-		$h =~ s/-.*$//; # Strip off -SS
-		if ($h and $t->{outgoingType} =~ /ET[CH]/) {
-			$h = "0x$h";
-			$h =~ s/0x0x/0x/;
+
+		$ss_t->{dt} = $ss_t->{withdraw_t}{dt} || $ss_t->{deposit_t}{dt} || DateTime->now;
+		$ss_t->{hash} = "$ss_t->{deposit_t}{hash}-SS-$ss_t->{withdraw_t}{hash}";
+		$ss_t->{note} = join "-",
+			$ss_t->{deposit_t}{from_account}{AccountRefUnique},
+			$ss_t->{deposit_t}{to_account}{AccountRefUnique},
+			$ss_t->{withdraw_t}{from_account}{AccountRefUnique},
+			$ss_t->{withdraw_t}{to_account}{AccountRefUnique},
+		;
+		if ($ss_t->{transaction} eq 'a9100aabc21a2c7df291a9e05eb32ee3c77fe5e06b31f6f867277570459ef90a') {
+			$ss_t->{dt} = DateTime->new(year=>2017,month=>06,day=>13,hour=>11,minute=>13,second=>59,time_zone=>'UTC');
 		}
-		if ($opt{trace} and $h eq $opt{trace}) { say "Found hash in ss data $h"};
-		if ($h and $hdict{$h}) {
-			$t->{T} = $hdict{$h}{T};
-			$t->{dt} = $hdict{$h}{dt};
-			$t->{timeStamp} = $hdict{$h}{timeStamp};
-			$t->{to} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toaccount} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toS} = substr($t->{to},0,6);
-			$t->{toDesc} = $t->{outgoingType};
-			$t->{from} = $t->{address};
-			$t->{fromS} = substr($t->{from},0,6);
-			$t->{fromDesc} = $t->{incomingType};
-			$t->{Value} = $t->{incomingCoin};
-			$t->{ccy} = $t->{incomingType};
-			$t->{source} = 'ShapesHit';
-			$t->{hash} = "$t->{transaction}-SS-$t->{withdraw}";
-			$count{h}++;
-			push @$enriched, $t;
-			next;
-		}
-		$h = substr($h,0,9); # hashes from Gastracker.io (ETC) have truncated transaction hashes
-		if ($h and $hdict{$h}) {
-			$t->{T} = $hdict{$h}{T};
-			$t->{dt} = $hdict{$h}{dt};
-			$t->{timeStamp} = $hdict{$h}{timeStamp};
-			$t->{to} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toaccount} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toS} = substr($t->{to},0,6);
-			$t->{toDesc} = $t->{outgoingType};
-			$t->{from} = $t->{address};
-			$t->{fromS} = substr($t->{from},0,6);
-			$t->{fromDesc} = $t->{incomingType};
-			$t->{Value} = $t->{incomingCoin};
-			$t->{ccy} = $t->{incomingType};
-			$t->{source} = 'ShapesHIT';
-			$t->{hash} = "$t->{transaction}-SS-$t->{withdraw}";
-			$count{shorthash}++;
-			push @$enriched, $t;
-			next;
-		}
-		my $a = ($t->{address}); #ss deposit address
-		if ($a) {
-			$a = "0x$a";
-			$a =~ s/0x0x/0x/;
-		}
-		if ($a and $adict{"to $a $t->{incomingCoin}"}) {
-			$t->{T} = $adict{$a}{T};
-			$t->{dt} = $adict{$a}{dt};
-			$t->{timeStamp} = $adict{$a}{timeStamp};
-			$t->{to} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toaccount} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toS} = substr($t->{to},0,6);
-			$t->{toDesc} = $t->{outgoingType};
-			$t->{from} = $t->{address};
-			$t->{fromS} = substr($t->{from},0,6);
-			$t->{fromDesc} = $t->{incomingType};
-			$t->{Value} = $t->{incomingCoin};
-			$t->{ccy} = $t->{incomingType};
-			$t->{source} = 'ShApeshit';
-			$t->{hash} = "$t->{transaction}-SS-$t->{withdraw}";
-			if ($t->{transaction} eq 'a9100aabc21a2c7df291a9e05eb32ee3c77fe5e06b31f6f867277570459ef90a') {
-				$t->{dt} = DateTime->new(year=>2017,month=>06,day=>13,hour=>11,minute=>13,second=>59,time_zone=>'UTC');	
-			}
-			$count{a}++;
-			push @$enriched, $t;
-			next;
-		}
-		my $w = ($t->{withdraw}); #ss withdrawal address
-		if ($w) {
-			$w = "0x$w";
-			$w =~ s/0x0x/0x/;
-		}
-		if ($w and $adict{"from $w $t->{outgoingCoin}"}) {
-			$t->{T} = $adict{$w}{T};
-			$t->{dt} = $adict{$w}{dt};
-			$t->{timeStamp} = $adict{$w}{timeStamp};
-			$t->{to} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toaccount} = 'ShapeShiftInternalAddresses'; # $t->{withdraw};
-			$t->{toS} = substr($t->{to},0,6);
-			$t->{toDesc} = $t->{outgoingType};
-			$t->{from} = $t->{address};
-			$t->{fromS} = substr($t->{from},0,6);
-			$t->{fromDesc} = $t->{incomingType};
-			$t->{Value} = $t->{incomingCoin};
-			$t->{ccy} = $t->{incomingType};
-			$t->{source} = 'ShapeshiW';
-			$t->{hash} = "$t->{transaction}-SS-$t->{withdraw}";
-			$count{w}++;
-			push @$enriched, $t;
-			next;
-		}
-		$count{none}++;	
+
 	}
-	foreach my $c (sort keys %count) {
-		say "$c $count{$c}";
-	}
-	return $enriched;
 }
 
-sub printTransactions {
-	my ($transactions,$sstransactions) = @_;
-	foreach my $t (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$transactions) {
-		print "$t->{source} $t->{T} $t->{fromS} $t->{amount} $t->{fromDesc} $t->{'Value'} $t->{ccy} $t->{toS} $t->{toDesc}\n";
+sub reportCounts {
+	foreach my $c (sort keys %counts) {
+		say "\t count of $c $counts{$c}";
 	}
 }
 
 sub printMySQLTransactions {
 	my $trans = shift;
-    print "TradeType,Subtype,DateTime,Account,ToAccount,Amount,AmountCcy,ValueX,ValueCcy,Rate,RateCcy,Fee,FeeCcy,Owner,Hash\n";
-    for my $rec (sort {$a->{dt} <=> $b->{dt}} @$trans) {
-    	my $dt = $rec->{dt};
-    	if (ref($dt) ne 'DateTime' ) {
-   		 	say "Oops" if !defined $dt;
-   		 	next;
-    	}
-    	my $datetime = $dt->datetime(" ");
-    	$rec->{subtype} ||= 'NULL';
-    	$rec->{toaccount} ||= 'NULL';
-    	$rec->{valueX} ||= 'NULL';
-    	$rec->{valueccy} ||= 'NULL';
-    	$rec->{rate} ||= 'NULL';
-    	$rec->{rateccy} ||= 'NULL';
-    	$rec->{fee} ||= 'NULL';
-    	$rec->{feeccy} ||= 'NULL';
-    	$rec->{owner} ||= 'NULL';
-       	print "$rec->{type},$rec->{subtype},$datetime,$rec->{account},$rec->{toaccount},$rec->{amount},$rec->{amountccy},$rec->{valueX},$rec->{valueccy},$rec->{rate},$rec->{rateccy},$rec->{fee},$rec->{feeccy},$rec->{owner},$rec->{hash}\n";
+    Transaction->printMySQLHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->printMySQL;
+	}
+}
+
+sub printTransactions {
+	my $trans = shift;
+    Transaction->printHeader;
+    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
+		$t->print;
 	}
 }
 
 
 #Main Program
 
-my ($btc, $bch, $etc, $eth, $ss) = ([],[],[],[],[]);
+#my ($btc, $bch, $etc, $eth, $ss) = ([],[],[],[],[]);
 #$bi = retrieve("$opt{datadir}/$opt{bitstamp}");
-$btc = retrieve("$opt{datadir}/$opt{bitcoin}");
-$bch = retrieve("$opt{datadir}/$opt{bitcoincash}");
-$eth = retrieve("$opt{datadir}/$opt{ether}");
-$etc = retrieve("$opt{datadir}/$opt{classic}");
-$ss = retrieve("$opt{datadir}/$opt{shapeshift}");
+my $btc = retrieve("$opt{datadir}/$opt{bitcoin}");
+my $bch = retrieve("$opt{datadir}/$opt{bitcoincash}");
+my $eth = retrieve("$opt{datadir}/$opt{ether}");
+my $etc = retrieve("$opt{datadir}/$opt{classic}");
+my $ss = retrieve("$opt{datadir}/$opt{shapeshift}");
 
 my $all = [];
 push(@$all, @$btc, @$bch, @$eth, @$etc);
-my $richer = enrichShapeShiftTransactions($ss, $all);
+enrichShapeShiftTransactions($ss, $all);
 #push(@$all, @$richer);
-printMySQLTransactions($richer);
-
+if ($opt{quick}) {
+	printTransactions($ss);
+} else {
+	printMySQLTransactions($ss);
+}
+reportCounts if $opt{counts};

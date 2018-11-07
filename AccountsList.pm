@@ -27,7 +27,7 @@ my $accounts;
 sub BUILDARGS {
 	my $self = shift;
 	my $datadir = shift || "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-	my $file = shift || "AccountsList16.csv";
+	my $file = shift || "AccountsListV3.csv";
 	return {
 		datadir => $datadir,
 		file => $file,
@@ -62,7 +62,7 @@ sub BUILD {
 		my $a = Account->new($rec);
 		$accounts->{$rec->{AccountRef}} = $a;
 	}
-#	say ref($self) . "BUILD initialised";
+	#say ref($self) . "BUILD initialised";
 }
 
 # addressDesc returns the description for an address as loaded from the AddressDescriptions.dat file
@@ -101,16 +101,18 @@ sub addresses {
 sub accounts {
 	my ($self, $currency) = @_;
 	my $res;
-	while ( my ($key, $val) = each %$accounts) {
-		next if defined $currency and $val->{Currency} ne $currency;
-		# AccountRefUnique may hold key-etc or key-bch if this key is used in more than one blockchain
-		$res->{$val->{AccountRefUnique}} = $val; #key it on both key and key-etc
-		$res->{$val->{AccountRef}} = $val; # If they are the same we just set it twice
-	}
-	$accounts = $res; # A bit controversial! After running this the AccountsList only knows about addresses for this currency.
+	if (defined $currency) {
+		while ( my ($key, $val) = each %$accounts) {
+			next if $val->{Currency} ne $currency;
+			# AccountRefUnique may hold key-etc or key-bch if this key is used in more than one blockchain
+			$res->{$val->{AccountRefUnique}} = $val; #key it on both key and key-etc
+			$res->{$val->{AccountRef}} = $val; # If they are the same we just set it twice
+		}
+		$accounts = $res; # A bit controversial! After running this the AccountsList only knows about addresses for this currency.
 						# Required by BCH and ETC processing. Otherwise subsequent calls to AccountsList->address() return the wrong address
 						# Will be fixed (and can be removed when all programs converted to use AccountRef and AccountRefUnique)
-	return $res;
+	}
+	return $accounts;
 }
 
 sub account {
