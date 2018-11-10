@@ -27,7 +27,7 @@ my $accounts;
 sub BUILDARGS {
 	my $self = shift;
 	my $datadir = shift || "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-	my $file = shift || "AccountsListV3.csv";
+	my $file = shift || "AccountsListV9.csv";
 	return {
 		datadir => $datadir,
 		file => $file,

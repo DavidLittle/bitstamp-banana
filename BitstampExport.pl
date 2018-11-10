@@ -5,7 +5,7 @@ use DateTime;
 # https://github.com/DavidLittle/bitstamp-banana.git
 #use Parse::CSV;
 use Data::Dumper;
-use Storable qw(dclone);
+use Storable qw(dclone store retrieve);
 use vars qw(%opt);
 use Getopt::Long;
 use lib '.';
@@ -13,6 +13,7 @@ use Account;
 use AccountsList;
 use Person;
 use Transaction;
+use TransactionUtils;
 
 # Process a Bitstamp export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
 # Program works in several stages:
@@ -26,33 +27,41 @@ use Transaction;
 # TBD - process Internal Txns (contract executions) eg 0x793C64E8D1c70DD1407Bca99C8A97eA8eb662ECc
 
 # Commandline args
-GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
-			'g:s' => \$opt{g}, #
-			'help' => \$opt{h}, #
-			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'owner:s' => \$opt{owner}, #
-			'start:s' => \$opt{start}, # starting address
-			'trans:s' => \$opt{trans}, # name of transactions CSV file
-			'cablefile:s' => \$opt{cablefile}, # filename of CSV file with USD GBP rates
+GetOptions(
+	'balances!' => \$opt{balances}, # Data Directory address
+	'datadir:s' => \$opt{datadir}, # Data Directory address
+	'g:s' => \$opt{g}, #
+	'help' => \$opt{h}, #
+	'quick!' => \$opt{quick}, #
+	'start:s' => \$opt{start}, # starting address
+	'trans:s' => \$opt{trans}, # name of transactions CSV file
+	'cablefile:s' => \$opt{cablefile}, # filename of CSV file with USD GBP rates
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{desc} ||= "ACK.csv"; #"AddressDescriptions.dat";
 $opt{hist} = "";
-$opt{key} ||= ''; # from etherscan.io
-$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{start} ||= "";
+$opt{trans} ||= "BitstampTransactions.dat";
 
 $opt{cablefile} ||= "Cable.dat";
-if ($opt{owner} eq 'David') {
-	$opt{trans} ||= "DavidsBitstampTransactions.csv";
-	$opt{hist} ||= "bitstamp_account_81162_history.txt";
-} elsif ($opt{owner} eq 'Richard') {
-	$opt{trans} ||= "RichardsBitstampTransactions.csv";
-	$opt{hist} ||= "bitstamp_account_512288_history.txt";
-} elsif ($opt{owner} eq 'Kevin') {
-	$opt{trans} ||= "KevinsBitstampTransactions.csv";
-}
+my $inputs = [
+	{
+		transactions => "DavidsBitstampTransactions.csv",
+		history  => "bitstamp_account_81162_history.txt",
+		owner => "David",
+	},
+	{
+		transactions => "RichardsBitstampTransactions.csv",
+		history  => "bitstamp_account_512288_history.txt",
+		owner => "Richard",
+	},
+	{
+		transactions => "KevinsBitstampTransactions.csv",
+		history  => "bitstamp_account_vulx4255_history.txt",
+		owner => "Kevin",
+	},
+];
+
 
 
 my %M = ('Jan'=>1,'Feb'=>2,"Mar"=>3,"Apr"=>4,"May"=>5,"Jun"=>6,"Jul"=>7,"Aug"=>8,"Sep"=>9,"Oct"=>10,"Nov"=>11,"Dec"=>12);
@@ -62,19 +71,12 @@ my $data3; # fee records appended
 my $owner = $opt{owner}; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 my $cable = {}; # hash keyed on date containing daily USD/GBP exchange rates
 my $withdrawal = {}; # hash keyed on datetime containing withdrawal addresses
-my %BananaMapping = (
-    "David,Main Account,BTC" => 10100,
-    "David,Main Account,ETH" => 10101,
-    "David,Main Account,USD" => 10102,
-    "David,Main Account,BCH" => 10103,
-    "David,BitstampFee,USD"	 => 6070,
-    "David,BitstampFee,BTC"  => 6071,
-    "David,BitstampFee,ETH"  => 6072,
-);
 
 sub getWithdrawalsFromHistory {
+	my ($histfile, $owner) = @_;
 	my $hist = undef;
-	open($hist, "$opt{datadir}/$opt{hist}") || die "Can't open $opt{hist} for reading: $!";
+	$withdrawal = {}; #Reset it for each new owner being processed
+	open($hist, "$opt{datadir}/$histfile") || die "Can't open $opt{hist} for reading: $!";
 	while(<$hist>) {
 		s/\r//; #Remove carriage return
 		chomp;
@@ -86,7 +88,7 @@ sub getWithdrawalsFromHistory {
 		my $dt = DateTime->new(year => $year, month => $month, day => $day, hour => $hour, minute => $min, second => $sec, time_zone => "UTC");
 		my $ts = $dt->epoch();
 #		say "$ts $amount $type $address";
-		$withdrawal->{$ts} = {amount => $amount, type => $type, address => $address};
+		$withdrawal->{$ts} = {amount => $amount, type => $type, address => $address, owner =>$owner};
 #		say "--"
 	}
 }
@@ -109,7 +111,8 @@ sub readFXrates {
 #print "Rate for 19-07-2018 is $cable->{'19-07-2018'}\n";
 
 sub readBitstampTransactions {
-	my $filename = "$opt{datadir}/$opt{trans}";
+	my ($transactionfile, $owner) = @_;
+	my $filename = "$opt{datadir}/$transactionfile";
 	my $in = undef;
 	my $data = [];
 	open($in, $filename) || die "Can't open $filename for reading: $!";
@@ -136,26 +139,34 @@ sub readBitstampTransactions {
 		    my ($rate, $rateccy) = split(/ /, $ratex);
 		    my ($fee, $feeccy) = split(/ /, $feex);
 		    my $rec = {};
-		    $rec->{tran_type} = $type;
+		    $rec->{tran_type} = 'Bitstamp';
 		    $rec->{tran_subtype} = $subtype;
 		    $rec->{dt} = $dt;
 		    $rec->{from_account} = $account;
 		    $rec->{amount} = $amount;
 		    $rec->{currency} = $amountccy;
 	    	$rec->{value} = $value if $value;
-	    	$rec->{value_currency} = $valueccy if $valueccy;
+	    	$rec->{value_currency} = $valueccy;
 		    $rec->{rate} = $rate || 1;
 			$rec->{fee_currency} = $feeccy if $feeccy;
 			$rec->{hash} = "$opt{trans}-Line$.";
+			my ($toprefix, $fromprefix) = (undef,undef);
+			$fromprefix = '0x' if ($amountccy =~ /^(ETH|ETC)$/);
+			$fromprefix = '3' if ($amountccy =~ /^(BTC|BCH)$/);
+			$toprefix = '0x' if ($valueccy =~ /^(ETH|ETC)$/);
+			$toprefix = '3' if ($valueccy =~ /^(BTC|BCH)$/);
 		    if ($type eq "Deposit" || $type eq "Card Deposit") {
-		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-		        $rec->{toaccount} = "Bitstamp $amountccy Trading";
-				$rec->{fromaccount} = "Bitstamp $amountccy Wallet";
-				$rec->{fromamount} = $amount;
-				$rec->{toamount} = $amount;
+				$rec->{tran_subtype} = $type;
+				${toprefix} = ${fromprefix}; # On a withdrawal to and from are same CCY
+		        $rec->{toaccount} = "${toprefix}Bitstamp${amountccy}Trading${owner}";
+				$rec->{fromaccount} = "${fromprefix}Bitstamp${amountccy}Wallet$owner";
+				$rec->{value_currency} = $rec->{currency}; # we don't get a value currency from Bitstamp for deposits
+				$rec->{amount} = $amount;
+				$rec->{value} = $amount;
 				$rec->{from_fee} = $fee || 0;
 		    } elsif ($type eq "Withdrawal") {
-		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
+				$rec->{tran_subtype} = $type;
+				${toprefix} = ${fromprefix}; # On a withdrawal to and from are same CCY
 		        my $ts = $rec->{dt}->epoch();
 		        my $offset = 0;
 		        while (!defined $withdrawal->{$ts-$offset} and !defined $withdrawal->{$ts+$offset} and $offset < 60*60*5) {
@@ -163,29 +174,29 @@ sub readBitstampTransactions {
 		        }
 		        my $wd = $withdrawal->{$ts-$offset} || $withdrawal->{$ts-$offset};
 		        if (!defined $wd) {
-			        say "Failed to find withdrawal address: $_" if $amountccy =~ /[BE]TC/;
+			        say "Failed to find withdrawal address: $_" if $amountccy =~ /^(BTC|ETH)$/;
 			    }
-			    my $toaccount = $wd->{address} || "Bitstamp $amountccy Wallet";
-		        $rec->{fromaccount} = "Bitstamp $amountccy Trading";
-				$rec->{toaccount} = "Bitstamp $amountccy Wallet";
-				$rec->{hash} .=	"-$toaccount";
-				$rec->{fromamount} = $amount;
-				$rec->{toamount} = $amount;
+				# Withdrawal of crypto will be to $wd->{address}; withdrawal of Fiat will be to Wallet
+				$rec->{toaccount} = "${toprefix}Bitstamp${amountccy}Wallet$owner";
+				$rec->{fromaccount} = "${fromprefix}Bitstamp${amountccy}Trading$owner";
+				$rec->{value_currency} = $rec->{currency}; # we don't get a value currency from Bitstamp for withdrawals
+				$rec->{amount} = $amount;
+				$rec->{value} = $amount;
+				my $toaddress = $wd->{address};
+				$rec->{hash} .=	"-$toaddress";
 				$rec->{to_fee} = $fee || 0;
 			} elsif ($type eq "Market" and $subtype eq "Buy") {
-		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$valueccy"};
-				$rec->{toaccount} = "Bitstamp $amountccy Trading";
-				$rec->{fromaccount} = "Bitstamp USD Trading";
-				$rec->{fromamount} = $value;
-				$rec->{toamount} = $amount;
+				$rec->{toaccount} = "${fromprefix}Bitstamp${amountccy}Trading${owner}";
+				$rec->{fromaccount} = "${toprefix}Bitstamp${valueccy}Trading${owner}";
+				$rec->{amount} = $value;
+				$rec->{value} = $amount;
+				$rec->{currency} = $valueccy;
+				$rec->{value_currency} = $amountccy;
 				$rec->{from_fee} = $fee || 0;
 
 		    } elsif ($type eq "Market" and $subtype eq "Sell") {
-		        $rec->{debitaccount} = $BananaMapping{"$owner,$account,$valueccy"};
-		        $rec->{creditaccount} = $BananaMapping{"$owner,$account,$amountccy"};
-				$rec->{fromaccount} = "Bitstamp $amountccy Trading";
-				$rec->{toaccount} = "Bitstamp USD Trading";
+				$rec->{toaccount} = "${toprefix}Bitstamp${valueccy}Trading${owner}";
+				$rec->{fromaccount} = "${fromprefix}Bitstamp${amountccy}Trading$owner";
 				$rec->{toamount} = $value;
 				$rec->{fromamount} = $amount;
 				$rec->{to_fee} = $fee || 0;
@@ -195,19 +206,19 @@ sub readBitstampTransactions {
 			$rec->{to_account} = AccountsList->account($rec->{toaccount});
 
 			if (! defined $rec->{from_account}) {
-				say "From account undefined $rec->{fromaccount}";
+				say "From account undefined $rec->{fromaccount} ($type $subtype $amountccy)";
 				next;
 			}
 			if (ref($rec->{from_account}) ne 'Account') {
-				say "From account is not a proper account $rec->{fromaccount}";
+				say "From account is not a proper account $rec->{fromaccount} ($type $subtype $amountccy)";
 				next;
 			}
 			if (! defined $rec->{to_account}) {
-				say "To account undefined $rec->{toaccount}";
+				say "To account undefined $rec->{toaccount} ($type $subtype $amountccy)";
 				next;
 			}
 			if (ref($rec->{to_account}) ne 'Account') {
-				say "To account is not a proper account $rec->{toaccount}";
+				say "To account is not a proper account $rec->{toaccount} ($type $subtype $amountccy)";
 				next;
 			}
 
@@ -334,8 +345,6 @@ sub accumulateFees {
 	        $feeacc->{subtype} = "Fee";
 	       	$feeacc->{amountccy} = $rec->{feeccy};
 	       	$feeacc->{amount} = $rec->{fee};
-	       	$feeacc->{account} = $BananaMapping{"$owner,BitstampFee,$rec->{feeccy}"};
-	       	$feeacc->{debitaccount} = $BananaMapping{"$owner,BitstampFee,$rec->{feeccy}"};
 	       	$feeacc->{creditaccount} = "";
 	       	$feeacc->{month} = $month;
 	       	$feeacc->{date} = $date;
@@ -367,35 +376,29 @@ sub accumulateFees {
 	return $fees;
 }
 
-sub printMySQLTransactions {
+sub saveTransactions {
 	my $trans = shift;
-    Transaction->printMySQLHeader;
-    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
-		$t->printMySQL;
-	}
+	store($trans, "$opt{datadir}/$opt{trans}");
 }
 
-sub printTransactions {
-	my $trans = shift;
-    Transaction->printHeader;
-    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
-		$t->print;
-	}
-}
 
 # Main program
 AccountsList->new();
 readFXrates();
-getWithdrawalsFromHistory();
-if (0) { # Processing for banana input
-	my $d = readBitstampTransactions();
-	my $a = accumulateMktOrders($d);
-	my $s = splitMarketOrders($a);
-	my $f = accumulateFees($d);
-	push (@$s, @$f);
-	printTransactions($s);
+my $data = [];
+foreach my $files (@$inputs) {
+	getWithdrawalsFromHistory($files->{history}, $files->{owner});
+	my $trans = readBitstampTransactions($files->{transactions}, $files->{owner});
+	push @$data, @$trans;
 }
-else { # Processing for MySQL input
-	my $m = readBitstampTransactions();
-	printMySQLTransactions($m);
+
+if($opt{balances}) {
+	TransactionUtils->printBalances($data);
 }
+elsif($opt{quick}) {
+	TransactionUtils->printTransactions($data);
+}
+else {
+	TransactionUtils->printMySQLTransactions($data);
+}
+saveTransactions($data);

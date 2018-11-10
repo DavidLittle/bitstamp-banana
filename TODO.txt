@@ -1,0 +1,1 @@
+Constants - things like BCHForkTime - where do they go and how implemented

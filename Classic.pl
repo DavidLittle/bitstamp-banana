@@ -15,7 +15,7 @@ use lib '.';
 use Account;
 use AccountsList;
 use Transaction;
-
+use TransactionUtils;
 
 # Ethereum Classic account tracker
 # Serveral ETC block explorer - do they cover early history, do they have APIs
@@ -26,15 +26,17 @@ use Transaction;
 # etherx.com - broken
 
 # Commandline args
-GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
-			'desc:s' => \$opt{desc}, #
-			'g:s' => \$opt{g}, #
-			'help' => \$opt{h}, #
-			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'quick!' => \$opt{quick}, #
-			'start:s' => \$opt{start}, # starting address
-			'transCSV:s' => \$opt{trans}, # CSV file containing the transactions
-			'trans:s' => \$opt{trans}, # datafile to save the classic transactions
+GetOptions(
+	'balances!' => \$opt{balances}, # Data Directory address
+	'datadir:s' => \$opt{datadir}, # Data Directory address
+	'desc:s' => \$opt{desc}, #
+	'g:s' => \$opt{g}, #
+	'help' => \$opt{h}, #
+	'key:s' => \$opt{key}, # API key to access etherscan.io
+	'quick!' => \$opt{quick}, #
+	'start:s' => \$opt{start}, # starting address
+	'transCSV:s' => \$opt{trans}, # CSV file containing the transactions
+	'trans:s' => \$opt{trans}, # datafile to save the classic transactions
 );
 
 # ETC transactions are copied/pasted into ClassicTransactions.csv from gastracker.io. Reformatted here and loaded into structure for printing etc.
@@ -54,7 +56,6 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 	my $aoh = []; #Array of hashes
 
 	my $f = "$opt{datadir}/$opt{transCSV}";
-#	say $f;
 	if (-e $f) {
 		$aoh = csv( in => $f, headers => "auto");
 	}
@@ -111,77 +112,24 @@ sub readClassicTransactions { # take an address return a pointer to array of has
 	}
 }
 
-sub printTransactions {
-	my ($transactions,$address) = @_;
-	my $processed;
-	foreach my $t (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$transactions) {
-		next if $processed->{$t->{hash}};
-		$processed->{$t->{hash}} = 1;
-		next if $address and $t->{from} ne $address and $t->{to} ne $address;
-		print "$t->{T} $t->{fromS} $t->{fromDesc} $t->{'valueSat'} $t->{currency} $t->{toS} $t->{toDesc} $t->{to}\n";
-	}
-}
-
-sub printTransactions {
-	my $trans = shift;
-    Transaction->printHeader;
-    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
-		$t->print;
-	}
-}
-sub printMySQLTransactions {
-	my $trans = shift;
-    Transaction->printMySQLHeader;
-    for my $t (sort {$a->{dt} <=> $b->{dt}} @$trans) {
-		$t->printMySQL;
-	}
-}
-
-sub calcBalances {
-	my $transactions = shift;
-	my $processed;
-	my $balances;
-	foreach my $t (sort {$a->{timeStamp} <=> $b->{timeStamp}} @$transactions) {
-		next if $processed->{$t->{hash}};
-		$processed->{$t->{hash}} = 1;
-		#$balances->{'txnFee'} += $t->{'txnFee'};
-		#$balances->{$t->{from}} -= $t->{'txnFee'}; # process tx fee even if this is an error transaction
-		#next if $t->{isError}; # Typically out of gas (make sure fees are processed but principal is not.
-		$balances->{$t->{from}} -= $t->{'ValueETC'};
-		$balances->{$t->{to}} += $t->{'ValueETC'};
-	}
-	return $balances;
-}
-
-sub printBalances {
-	my $balances = shift;
-	foreach my $address (sort keys %$balances) {
-		next if AccountsList->address($address,'Follow') eq 'N';
-		my $bal1 = $balances->{$address};
-		say "$address $bal1 " . AccountsList->address($address);
-	}
-}
-
 sub saveTransactions {
 	my $trans = shift;
 	store($trans, "$opt{datadir}/$opt{trans}");
 }
 
-#addressDesc();
 AccountsList->new();
-#AccountsList->backCompatible();
 my $a = AccountsList->accounts('ETC');
 
 my $transactions = [];
 readClassicTransactions($transactions);
-#say Dumper $transactions;
-#printTransactions($transactions);
-if ($opt{quick}) {
-	printTransactions($transactions);
+
+if ($opt{balances}) {
+	TransactionUtils->printBalances($transactions);
+}
+elsif ($opt{quick}) {
+	TransactionUtils->printTransactions($transactions);
 }
 else {
-	printMySQLTransactions($transactions);
+	TransactionUtils->printMySQLTransactions($transactions);
 }
-my $b = calcBalances($transactions);
-#printBalances($b);
 saveTransactions($transactions);

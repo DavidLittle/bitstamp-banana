@@ -10,18 +10,20 @@ use Storable qw(dclone store retrieve);
 use JSON::Parse qw(parse_json json_file_to_perl);
 use LWP::Simple;
 use vars qw(%opt);
+use vars qw(%counts);
 use Getopt::Long;
 use lib '.';
 use AccountsList;
 use Account;
 use Person;
 use Transaction;
-
+use TransactionUtils;
 
 # Process Blockchain.info API
 
 # Commandline args
 GetOptions(
+	'balances!' => \$opt{balances}, # Calc and print balances
 	'counts!' => \$opt{counts}, # Calc and print balances
 	'datadir:s' => \$opt{datadir}, # Data Directory address
 	'balances!' => \$opt{balances}, # Calc and print balances
@@ -45,7 +47,6 @@ my $url = "https://blockchain.info/";
 my $txurl = "${url}rawtx/";
 my $addrurl = "${url}rawaddr/";
 my $addrurlsuffix = "?&n=50&offset=";
-my %counts;
 
 my $BCHForkTime = DateTime->new(year=>2017,month=>8,day=>1,hour=>13,minute=>16,second=>14,time_zone=>'UTC');
 
@@ -335,7 +336,7 @@ sub doSOmethingUseful {
 			my $address = "Unknown addresses";
 			$address = "ShapeShiftInternalAddresses" if $out->{ShapeShift} eq 'Output'; # output ShapeShift withdrawal address, therefore input is SS internal
 			#
-			$address = "BitstampInternalAddresses" if $data->{inownercount}{'Bitstamp'} > 0; # We only need to identify 1 input in the Accounts file
+			$address = "3BitstampBTCWallet$out->{owner}" if $data->{inownercount}{'Bitstamp'} > 0; # We only need to identify 1 input in the Accounts file
 			$address = "itBitInternalAddresses" if $data->{inownercount}{'itBit'} > 0; # We only need to identify 1 input in the Accounts file
 			$address = "MtGoxWithdraw" if $data->{inownercount}{'MtGox'} > 0; # We only need to identify 1 input in the Accounts file
 			$address = "LocalBitcoins" if $data->{inownercount}{'LocalBitcoins'} > 0; # We only need to identify 1 input in the Accounts file
@@ -667,18 +668,19 @@ elsif ($opt{testArmory}) {
 elsif ($opt{balances}) {
 	my $t = getTransactionsFromAccountsList();
 	my $t1 = doSOmethingUseful($t);
-	printBalances(calcBalances($t1, $BCHForkTime));
+	#printBalances(calcBalances($t1, $BCHForkTime));
+	TransactionUtils->printBalances($t1);
 }
 elsif ($opt{quick}) {
 	my $t = getTransactionsFromAccountsList();
 	my $t1 = doSOmethingUseful($t);
-	printTransactions($t1);
+	TransactionUtils->printTransactions($t1);
 	saveTransactions($t1);
 }
 else {
 	my $t = getTransactionsFromAccountsList();
 	my $t1 = doSOmethingUseful($t);
-	printMySQLTransactions($t1);
+	TransactionUtils->printMySQLTransactions($t1);
 	saveTransactions($t1);
 }
 reportCounts() if $opt{counts};

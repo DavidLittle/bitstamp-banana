@@ -16,6 +16,7 @@ use AccountsList;
 use Account;
 use Person;
 use Transaction;
+use TransactionUtils;
 
 # Process an Etherscan.io export CSV file so that it is conveniently usable as a spreadsheet or as an import into an accounting system
 # Program works in several stages:
@@ -26,15 +27,17 @@ use Transaction;
 # TBD - process USD/GBP exchange rates cable.dat
 
 # Commandline args
-GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
-			'desc:s' => \$opt{desc}, #
-			'g:s' => \$opt{g}, #
-			'h' => \$opt{h}, #
-			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'quick!' =>\$opt{quick},
-			'start:s' => \$opt{start}, # starting address
-			'trace:s' => \$opt{trace}, # starting address
-			'trans:s' => \$opt{trans}, # starting address
+GetOptions(
+	'balances!' => \$opt{balances}, # Data Directory address
+	'datadir:s' => \$opt{datadir}, # Data Directory address
+	'desc:s' => \$opt{desc}, #
+	'g:s' => \$opt{g}, #
+	'h' => \$opt{h}, #
+	'key:s' => \$opt{key}, # API key to access etherscan.io
+	'quick!' =>\$opt{quick},
+	'start:s' => \$opt{start}, # starting address
+	'trace:s' => \$opt{trace}, # starting address
+	'trans:s' => \$opt{trans}, # starting address
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
@@ -215,6 +218,17 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 			# Sadly etherscan.io API does not return correct info for invocation of ReplaySafeSplit contract - force the addresses
 			$tran->{to} = '0x93a44c99642a02fc4e62a97e13c703932682db36';
 			$tran->{from} = '0xd5fbb237f5200b097031025cdb914c4595bceffa';
+			$tran->{note} .= "EtherscanExport.pl munged from and to addresses for ReplaySafeSplit";
+		}
+		if($tran->{from} eq '0x1522900b6dafac587d499a862861c0869be6e428') {
+			# Bitstamp withdrawal contract - we need to override to fix the owner
+			# in order for Bitstamp wallet reconciliation to work
+			my $ow = AccountsList->account($tran->{to})->Owner->name();
+			my $ad = "0xBitstampETHWallet$ow";
+			if(AccountsList->account($ad)) {
+				$tran->{note} .= "OrigFromAddress:$tran->{from}";
+				$tran->{from} = $ad;
+			}
 		}
 		my ($to, $from) = ($tran->{to}, $tran->{from});
 
@@ -252,11 +266,35 @@ sub readJson { # take an address return a pointer to array of hashes containing 
 		$tran->{to_fee} = 0; # txn fee in ETH
 		$tran->{fee_currency} = $tran->{currency};
 
+		next unless _check_consistency($tran,"");
 		my $T = Transaction->new($tran);
 
 		push @$transactions, $T;
 	}
 	return;
+}
+
+sub _check_consistency {
+	my ($data, $str) = @_;
+	#say $data->{toaccount} if !defined $data->{to_account};
+	#say $data->{fromaccount} if !defined $data->{from_account};
+	if (! defined $data->{from_account}) {
+		say "$str From account undefined $data->{address}";
+		return 0;
+	}
+	if (ref($data->{from_account}) ne 'Account') {
+		say "$str From account is not a proper account $data->{address}";
+		return 0;
+	}
+	if (! defined $data->{to_account}) {
+		say "$str To account undefined $data->{toaddress}";
+		return 0;
+	}
+	if (ref($data->{to_account}) ne 'Account') {
+		say "$str To account is not a proper account $data->{toaddress}";
+		return 0;
+	}
+	return 1;
 }
 
 sub calcBalances {
@@ -350,13 +388,17 @@ if($opt{start}) {
 	print "Start address $opt{start}\n";
 	readJson($opt{start}, $tj);
 }
+elsif($opt{balances}) {
+	getAllTransactions($tj);
+	TransactionUtils->printBalances($tj);
+}
 elsif($opt{quick}) {
 	getAllTransactions($tj);
-	printTransactions($tj);
+	TransactionUtils->printTransactions($tj);
 }
 else {
 	getAllTransactions($tj);
-	printMySQLTransactions($tj);
+	TransactionUtils->printMySQLTransactions($tj);
 }
 saveTransactions($tj);
 #my $bj = calcBalances($tj);

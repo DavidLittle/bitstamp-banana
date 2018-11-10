@@ -147,10 +147,17 @@ sub getAddrTransactions {
 	$processedad->{$address} = 1;
 	my $cachefile = "$opt{datadir}/BCHaddrTx$address.json"; # reads from cache file if one exists. Otherwise calls api and stores to cache file
 	my $data = 0;
+	my $balance = 0;
 	if (-e $cachefile) {
 		$data = retrieve($cachefile);
-		if (ref($data) eq 'ARRAY') {
+		if (ref($data) eq 'ARRAY') { # Array of transactions
+			foreach my $t (@$data) {$balance += $t->{balance_diff} / 1e8};
+			say "$address balance $balance" if $balance;
 			return $data;
+		}
+		elsif (ref($data) eq 'HASH' and !%$data) {
+			#say "$address is not a BCH address"; #eg Electron cash unused addresses
+			return 0; #got an empty hash - not a BCH address
 		}
 		elsif (ref($data) eq 'HASH' and $data->{err_no} == 0) {
 			return $data->{data}{list};
@@ -364,7 +371,7 @@ sub doSOmethingUseful {
 			$data->{outcount}++;
 		}
 		$data->{txnFee} = ($data->{invalue} - $data->{outvalue}) / 1e8;
-		if ($data->{outfollowcount}{'Y'} == 1 and $data->{inownercount}{'Unknown'} == $data->{incount}) {
+		if ($data->{outfollowcount}{'Y'} == 1 and $data->{infollowcount}{'N'} == $data->{incount}) {
 			# Many to one (or 2) many inputs can be collapsed into one dummy address
 			# This is a ShapeShift Output transaction. There could be many inputs and they are all ShapeShift internal addresses (unknown to AccountsList->)
 			# There will be one or two outputs. One is the AccountRef that ShapeShift has sent the funds to - it should be owned by one of us with Follow=Y
