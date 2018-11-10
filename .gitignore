@@ -6,6 +6,9 @@
 *.o
 *.pm.tdy
 *.bs
+*.csv
+archive/
+nytprof/
 
 # Devel::Cover
 cover_db/
