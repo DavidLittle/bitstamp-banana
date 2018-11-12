@@ -53,15 +53,17 @@ sub readItBitTransactions {
 		say "Missing file $filename";
 	}
 
+	my $line_number = 1;
 	foreach my $rec (@$aoh) {
 		$rec->{tran_type} = 'ItBit';
+		$line_number++;
 		$rec->{tran_subtype} = $rec->{transaction};
 		$rec->{time} =~ s/ /T/; #Change 2017-02-08 14:53:27 to 2017-02-08T14:53:27
 		$rec->{dt} = DateTime::Format::ISO8601->parse_datetime( $rec->{time} );
 		my $type;
 	    #$rec->{amount}; # From ItBit file
 	    #$rec->{currency}; # From ItBit file
-		#$rec->{notes}; from ItBit file
+		$rec->{note} = $rec->{notes}; # from ItBit file
 		$rec->{currency} =~ s/^XBT$/BTC/; # ItBit doesn't use convention
 		my $currency = $rec->{currency};
 		my $type = $rec->{transaction};
@@ -70,7 +72,7 @@ sub readItBitTransactions {
 	    $rec->{rate} = 1;
 		$rec->{fee_currency} = $rec->{currency};
 		$rec->{from_fee} = $rec->{to_fee} = 0; # We get no fee information from
-		$rec->{hash} = "${transactionfile}-Line$.";
+		$rec->{hash} = "${transactionfile}-Line$line_number";
 		my ($toprefix, $fromprefix) = (undef,undef);
 		$fromprefix = '0x' if ($currency =~ /^(ETH|ETC)$/);
 		$fromprefix = '3' if ($currency =~ /^(BTC|BCH)$/);

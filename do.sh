@@ -7,8 +7,9 @@ perl EtherscanExport.pl > ETH.csv
 perl ShapeShift.pl > SS.csv
 perl BitstampExport.pl > Bitstamp.csv
 perl ItBitExport.pl > ItBit.csv
+perl MtGoxExport.pl > MtGox.csv
 cp ~/Dropbox/Investments/Ethereum/Etherscan/$ACCOUNTS .
 wc *.csv
 
 rm Extracts.zip
-zip Extracts.zip BTC.csv BCH.csv ETC.csv ETH.csv SS.csv Bitstamp.csv ItBit.csv $ACCOUNTS
+zip Extracts.zip BTC.csv BCH.csv ETC.csv ETH.csv SS.csv Bitstamp.csv ItBit.csv MtGox.csv $ACCOUNTS

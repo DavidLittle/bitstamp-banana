@@ -21,23 +21,19 @@ use Transaction;
 # Process Blockchain.info API
 
 # Commandline args
-GetOptions('datadir:s' => \$opt{datadir}, # Data Directory address
-			'g:s' => \$opt{g}, #
-			'h' => \$opt{h}, #
-			'key:s' => \$opt{key}, # API key to access etherscan.io
-			'owner:s' => \$opt{owner}, #
-			'quick!' => \$opt{quick},
-			'start:s' => \$opt{start}, # starting address
-			'trace:s' => \$opt{trace}, # trace hash or address
-			'trans:s' => \$opt{trans}, # Blockchain transactions datafile
-			'ss' => \$opt{ss}, # Process all ShapeShift transactions to harvest relevant BCH addresses
-			'sstrans:s' => \$opt{sstrans}, # Shapeshift transactions datafile
-			'testArmory!' => \$opt{testArmory},
+GetOptions(
+	'balances!' => \$opt{balances}, # Data Directory address
+	'datadir:s' => \$opt{datadir}, # Data Directory address
+	'g:s' => \$opt{g}, #
+	'h' => \$opt{h}, #
+	'quick!' => \$opt{quick},
+	'start:s' => \$opt{start}, # starting address
+	'trace:s' => \$opt{trace}, # trace hash or address
+	'trans:s' => \$opt{trans}, # Blockchain transactions datafile
+	'testArmory!' => \$opt{testArmory},
 );
 
 $opt{datadir} ||= "/home/david/Dropbox/Investments/Ethereum/Etherscan";
-$opt{key} ||= ''; # from etherscan.io
-$opt{owner} ||= "David"; # Owner of the Bitstamp account. Could be Richard, David, Kevin, etc - used in the mapping of Banana account codes.
 $opt{start} ||= "";
 $opt{trans} ||= "BCHTransactions.dat";
 $opt{sstrans} ||= "ShapeshiftTransactions.dat";
@@ -152,7 +148,7 @@ sub getAddrTransactions {
 		$data = retrieve($cachefile);
 		if (ref($data) eq 'ARRAY') { # Array of transactions
 			foreach my $t (@$data) {$balance += $t->{balance_diff} / 1e8};
-			say "$address balance $balance" if $balance;
+			say "$address balance from API: $balance" if $balance and $opt{balances};
 			return $data;
 		}
 		elsif (ref($data) eq 'HASH' and !%$data) {

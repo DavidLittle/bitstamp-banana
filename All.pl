@@ -38,6 +38,7 @@ $opt{bitcoin} ||= "BlockchainTransactions.dat";
 $opt{bitcoincash} ||= "BCHTransactions.dat";
 $opt{classic} ||= "ClassicTransactions.dat";
 $opt{ether} ||= "EtherTransactions.dat";
+$opt{ItBit} ||= "ItBitTransactions.dat";
 $opt{shapeshift} ||= "ShapeshiftTransactions.dat";
 
 # Global variables
@@ -53,6 +54,7 @@ sub reportCounts {
 
 #my ($btc, $bch, $etc, $eth, $ss) = ([],[],[],[],[]);
 my $bit = retrieve("$opt{datadir}/$opt{bitstamp}");
+my $itbit = retrieve("$opt{datadir}/$opt{ItBit}");
 my $btc = retrieve("$opt{datadir}/$opt{bitcoin}");
 my $bch = retrieve("$opt{datadir}/$opt{bitcoincash}");
 my $eth = retrieve("$opt{datadir}/$opt{ether}");
@@ -60,7 +62,7 @@ my $etc = retrieve("$opt{datadir}/$opt{classic}");
 my $ss = retrieve("$opt{datadir}/$opt{shapeshift}");
 
 my $all = [];
-push(@$all, @$bit, @$btc, @$bch, @$eth, @$etc, @$ss);
+push(@$all, @$bit, @$itbit, @$btc, @$bch, @$eth, @$etc, @$ss);
 
 if ($opt{balances}) {
 	TransactionUtils->printBalances($all);
